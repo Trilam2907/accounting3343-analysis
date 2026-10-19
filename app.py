@@ -1,35 +1,23 @@
 from pathlib import Path
 
 import pandas as pd
-import plotly.express as px
 import streamlit as st
 
 
 DATA_PATH = Path(__file__).resolve().with_name("sp500_screening_results.csv")
 SCORE_COLUMN = "Financial Strength Score (0-9)"
-FILTER_COLUMNS = {
-    "STA": "STA",
-    "SNOA": "SNOA",
-    "Altman Z-Score": "Altman Z",
-    "Financial Strength Score": SCORE_COLUMN,
-}
-SCORE_COMPONENT_COLUMNS = [
+SCORE_COMPONENTS = [
     "Profitability Score (0-4)",
-    "Leverage Score",
-    "Liquidity Score",
-    "Equity Issuance Score",
     "Funding Score (0-3)",
     "Efficiency Score (0-2)",
 ]
-DISPLAY_COLUMNS = [
+KEY_COLUMNS = [
     "Ticker",
-    "Latest Fiscal Year",
     "STA",
     "SNOA",
     "Altman Z",
     "Risk Classification",
     SCORE_COLUMN,
-    *SCORE_COMPONENT_COLUMNS,
 ]
 
 
@@ -39,50 +27,30 @@ def load_data(path: str) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
-def prepare_data(df: pd.DataFrame) -> tuple[pd.DataFrame, str]:
-    """Reuse the saved aggregate score, or safely derive one from available scores."""
-    prepared = df.copy()
-    if SCORE_COLUMN in prepared.columns:
-        prepared[SCORE_COLUMN] = pd.to_numeric(prepared[SCORE_COLUMN], errors="coerce")
-        return prepared, "The saved aggregate score from the CSV is being used."
+def validate_score_definition(data: pd.DataFrame) -> tuple[bool, str]:
+    """Check that the saved aggregate matches the formula in financial_screen.py."""
+    required = [SCORE_COLUMN, *SCORE_COMPONENTS]
+    missing = [column for column in required if column not in data.columns]
+    if missing:
+        return False, f"Cannot validate the saved score; missing columns: {', '.join(missing)}."
 
-    profitability = "Profitability Score (0-4)"
-    leverage = "Leverage Score"
-    liquidity = "Liquidity Score"
-    issuance = "Equity Issuance Score"
-    funding = "Funding Score (0-3)"
-    efficiency = "Efficiency Score (0-2)"
+    components = data[SCORE_COMPONENTS].apply(pd.to_numeric, errors="coerce")
+    saved_score = pd.to_numeric(data[SCORE_COLUMN], errors="coerce")
+    calculated_score = components.sum(axis=1, min_count=len(SCORE_COMPONENTS))
+    comparable = saved_score.notna() & calculated_score.notna()
 
-    score_inputs = [profitability, leverage, liquidity, issuance, funding, efficiency]
-    for column in score_inputs:
-        if column in prepared.columns:
-            prepared[column] = pd.to_numeric(prepared[column], errors="coerce")
+    if not comparable.any():
+        return False, "Cannot validate the saved score because there are no complete score rows."
+    if not calculated_score[comparable].eq(saved_score[comparable]).all():
+        return False, "The saved aggregate does not match Profitability + Funding + Efficiency."
+    if saved_score.isna().any() or calculated_score.isna().any():
+        return False, "Some rows have missing score inputs or aggregates; those rows cannot be ranked."
 
-    if all(column in prepared.columns for column in [profitability, leverage, liquidity, issuance, efficiency]):
-        # Funding Score already sums leverage, liquidity, and equity issuance.
-        # Use its three underlying signals instead when deriving from components.
-        formula_columns = [profitability, leverage, liquidity, issuance, efficiency]
-        prepared[SCORE_COLUMN] = prepared[formula_columns].sum(axis=1, min_count=len(formula_columns))
-        return prepared, (
-            "The aggregate was derived as Profitability + Leverage + Liquidity + "
-            "Equity Issuance + Efficiency. Funding Score is excluded because it "
-            "already totals the three funding signals."
-        )
-
-    if all(column in prepared.columns for column in [profitability, funding, efficiency]):
-        formula_columns = [profitability, funding, efficiency]
-        prepared[SCORE_COLUMN] = prepared[formula_columns].sum(axis=1, min_count=len(formula_columns))
-        return prepared, (
-            "The aggregate was derived as Profitability + Funding + Efficiency. "
-            "Rows missing any of these scores remain unscored."
-        )
-
-    prepared[SCORE_COLUMN] = float("nan")
-    return prepared, "A combined score could not be derived because required score columns are unavailable."
+    return True, "Saved score verified: Profitability + Funding + Efficiency (range 0–9)."
 
 
 def slider_settings(series: pd.Series) -> dict | None:
-    """Return actual data bounds and safe Streamlit slider settings."""
+    """Return data-derived slider bounds, with safe handling for constants and missing values."""
     values = pd.to_numeric(series, errors="coerce").dropna()
     if values.empty:
         return None
@@ -91,19 +59,13 @@ def slider_settings(series: pd.Series) -> dict | None:
     data_max = float(values.max())
     slider_min = data_min
     slider_max = data_max
-
     if data_min == data_max:
-        # Streamlit requires different slider endpoints for a constant column.
         padding = max(abs(data_min) * 0.1, 1.0)
-        slider_min = data_min - padding
-        slider_max = data_max + padding
+        slider_min -= padding
+        slider_max += padding
 
     span = slider_max - slider_min
-    if values.astype(float).map(lambda value: value.is_integer()).all():
-        step = 1.0
-    else:
-        step = max(span / 1000, 0.000001)
-
+    step = 1.0 if values.astype(float).map(lambda value: value.is_integer()).all() else max(span / 1000, 0.000001)
     return {
         "data_min": data_min,
         "data_max": data_max,
@@ -113,239 +75,295 @@ def slider_settings(series: pd.Series) -> dict | None:
     }
 
 
-def format_bound(value: float) -> str:
-    return f"{value:,.6g}"
+def default_cutoff(metric: str, series: pd.Series, settings: dict) -> float:
+    """Use intuitive screening defaults, clamped to the observed data range."""
+    values = pd.to_numeric(series, errors="coerce").dropna()
+    defaults = {
+        "STA": 0.0,
+        "SNOA": float(values.median()) if not values.empty else settings["data_min"],
+        "Altman Z": 2.99,
+    }
+    value = defaults[metric]
+    return min(max(value, settings["data_min"]), settings["data_max"])
 
 
-def reset_filters(filter_keys: list[str]) -> None:
-    for key in filter_keys:
-        st.session_state.pop(key, None)
-    st.session_state.pop("ticker_search", None)
+def reset_cutoffs(metrics: list[str]) -> None:
+    for metric in metrics:
+        st.session_state.pop(f"cutoff_{metric}", None)
 
 
-def apply_filters(
-    df: pd.DataFrame,
-    selected_ranges: dict[str, tuple[float, float]],
-    ticker_query: str,
-) -> pd.DataFrame:
-    filtered = df.copy()
+def apply_screening_funnel(
+    data: pd.DataFrame,
+    sta_minimum: float,
+    snoa_minimum: float,
+    altman_z_maximum: float,
+) -> tuple[pd.DataFrame, list[dict]]:
+    """Apply the three rules sequentially and report each stage's pass/exclusion counts."""
+    rules = [
+        ("STA", "STA", lambda values: values >= sta_minimum, f"STA ≥ {sta_minimum:.6g}"),
+        ("SNOA", "SNOA", lambda values: values >= snoa_minimum, f"SNOA ≥ {snoa_minimum:.6g}"),
+        ("Altman Z-Score", "Altman Z", lambda values: values <= altman_z_maximum, f"Altman Z ≤ {altman_z_maximum:.6g}"),
+    ]
+    current = data.copy()
+    stages = []
 
-    if ticker_query.strip() and "Ticker" in filtered.columns:
-        filtered = filtered[
-            filtered["Ticker"].astype("string").str.contains(
-                ticker_query.strip(), case=False, na=False, regex=False
+    for label, column, passes_rule, threshold_text in rules:
+        if column not in current.columns:
+            stages.append(
+                {
+                    "name": label,
+                    "threshold": threshold_text,
+                    "input": len(current),
+                    "passed": 0,
+                    "excluded": len(current),
+                    "missing": len(current),
+                    "unavailable": True,
+                }
             )
-        ]
-
-    for column, selected_range in selected_ranges.items():
-        if column not in filtered.columns:
+            current = current.iloc[0:0].copy()
             continue
-        values = pd.to_numeric(filtered[column], errors="coerce")
-        filtered = filtered[values.notna() & values.between(*selected_range)]
 
-    return filtered.reset_index(drop=True)
+        values = pd.to_numeric(current[column], errors="coerce")
+        available = values.notna()
+        missing_count = int((~available).sum())
+        pass_mask = available & passes_rule(values)
+        passed = current.loc[pass_mask].copy()
+        input_count = len(current)
+        stages.append(
+            {
+                "name": label,
+                "threshold": threshold_text,
+                "input": input_count,
+                "passed": len(passed),
+                "excluded": input_count - len(passed),
+                "missing": missing_count,
+                "unavailable": False,
+            }
+        )
+        current = passed
 
-
-def get_risk_category(row: pd.Series) -> str | None:
-    categories = {"Distress", "Grey", "Safe"}
-    saved_category = row.get("Risk Classification")
-    if pd.notna(saved_category) and str(saved_category).strip().title() in categories:
-        return str(saved_category).strip().title()
-
-    z_score = pd.to_numeric(pd.Series([row.get("Altman Z")]), errors="coerce").iloc[0]
-    if pd.isna(z_score):
-        return None
-    if z_score > 2.99:
-        return "Safe"
-    if z_score >= 1.81:
-        return "Grey"
-    return "Distress"
-
-
-def show_charts(filtered: pd.DataFrame) -> None:
-    st.subheader("Company rankings and risk categories")
-
-    if SCORE_COLUMN in filtered.columns and "Ticker" in filtered.columns:
-        ranking = filtered[["Ticker", SCORE_COLUMN]].dropna().nlargest(20, SCORE_COLUMN)
-        if ranking.empty:
-            st.info("No companies with a financial strength score match the current filters.")
-        else:
-            ranking = ranking.sort_values(SCORE_COLUMN, ascending=True)
-            chart = px.bar(
-                ranking,
-                x=SCORE_COLUMN,
-                y="Ticker",
-                orientation="h",
-                title="Top 20 matching companies by Financial Strength Score",
-                labels={SCORE_COLUMN: "Financial Strength Score", "Ticker": "Company"},
-                hover_data={SCORE_COLUMN: ":.2f"},
-            )
-            st.plotly_chart(chart, width="stretch")
-    else:
-        st.info("The ranking chart is unavailable because ticker or score data is missing.")
-
-    risk_counts = {"Distress": 0, "Grey": 0, "Safe": 0}
-    unclassified_count = 0
-    for _, row in filtered.iterrows():
-        category = get_risk_category(row)
-        if category in risk_counts:
-            risk_counts[category] += 1
-        else:
-            unclassified_count += 1
-
-    risk_df = pd.DataFrame(
-        {"Risk Category": list(risk_counts), "Companies": list(risk_counts.values())}
-    )
-    risk_chart = px.bar(
-        risk_df,
-        x="Risk Category",
-        y="Companies",
-        category_orders={"Risk Category": ["Distress", "Grey", "Safe"]},
-        title="Companies by Altman Z-Score category",
-        color="Risk Category",
-        color_discrete_map={"Distress": "#d9534f", "Grey": "#f0ad4e", "Safe": "#5cb85c"},
-    )
-    st.plotly_chart(risk_chart, width="stretch")
-    if unclassified_count:
-        st.caption(f"{unclassified_count} matching companies could not be classified because their Altman Z-Score is missing.")
+    return current.reset_index(drop=True), stages
 
 
-def show_company_details(filtered: pd.DataFrame) -> None:
-    st.subheader("Company details")
-    if filtered.empty or "Ticker" not in filtered.columns:
-        st.info("No matching company is available to select.")
-        return
-
-    tickers = sorted(filtered["Ticker"].dropna().astype(str).unique())
-    if not tickers:
-        st.info("No ticker identifiers are available in the filtered data.")
-        return
-
-    ticker = st.selectbox("Choose a company", tickers)
-    company = filtered[filtered["Ticker"].astype(str) == ticker].iloc[0]
-    detail_columns = [column for column in DISPLAY_COLUMNS if column in filtered.columns]
-    details = company[detail_columns].map(
-        lambda value: "" if pd.isna(value) else str(value)
-    )
-    st.dataframe(
-        details.to_frame(name="Value"),
-        width="stretch",
+def candidate_reasons(row: pd.Series, sta_minimum: float, snoa_minimum: float, altman_z_maximum: float) -> str:
+    return (
+        f"STA {row['STA']:.4g} ≥ {sta_minimum:.4g}; "
+        f"SNOA {row['SNOA']:.4g} ≥ {snoa_minimum:.4g}; "
+        f"Altman Z {row['Altman Z']:.4g} ≤ {altman_z_maximum:.4g}"
     )
 
 
 def main() -> None:
-    st.set_page_config(page_title="S&P 500 Financial Screen", layout="wide")
-    st.title("S&P 500 Financial Screening Dashboard")
+    st.set_page_config(page_title="S&P 500 short-candidate research screen", layout="wide")
+    st.title("S&P 500 short-candidate research screen")
+    st.write(
+        "This workflow narrows the full saved S&P 500 dataset using three transparent "
+        "financial-risk signals. It identifies companies for further research, not "
+        "guaranteed short positions."
+    )
 
     try:
-        df = load_data(str(DATA_PATH))
+        data = load_data(str(DATA_PATH))
     except FileNotFoundError:
-        st.error(f"Could not find `{DATA_PATH.name}`. Place it in the same folder as `app.py`.")
+        st.error(f"Could not find `{DATA_PATH.name}`. Keep it in the same folder as `app.py`.")
         st.stop()
     except pd.errors.EmptyDataError:
         st.error(f"`{DATA_PATH.name}` is empty.")
         st.stop()
 
-    if df.empty:
-        st.error("The screening CSV has no company rows.")
+    if data.empty:
+        st.error("The screening results file contains no company rows.")
         st.stop()
 
-    df, score_note = prepare_data(df)
-    st.caption(score_note)
+    st.header("1. Starting universe")
+    initial_count = data["Ticker"].nunique() if "Ticker" in data.columns else len(data)
+    st.metric("Companies in the starting dataset", initial_count)
 
-    available_filters = {
-        label: column for label, column in FILTER_COLUMNS.items() if column in df.columns
-    }
-    missing_filters = [label for label in FILTER_COLUMNS if label not in available_filters]
+    universe_search = st.text_input(
+        "Search the starting-universe table by ticker",
+        key="universe_search",
+        help="This search changes the table shown here only; the funnel always starts with the complete dataset.",
+    )
+    universe_table = data.copy()
+    if universe_search.strip() and "Ticker" in universe_table.columns:
+        universe_table = universe_table[
+            universe_table["Ticker"].astype("string").str.contains(
+                universe_search.strip(), case=False, na=False, regex=False
+            )
+        ]
 
-    if missing_filters:
-        st.warning("These filters are unavailable because their CSV columns are missing: " + ", ".join(missing_filters))
+    universe_columns = [column for column in KEY_COLUMNS if column in data.columns]
+    if universe_table.empty:
+        st.info("No starting-universe rows match that ticker search.")
+    else:
+        st.dataframe(
+            universe_table[universe_columns],
+            height=360,
+            hide_index=True,
+            alt="Searchable starting universe with key financial screening metrics",
+        )
 
-    slider_data = {
-        label: slider_settings(df[column])
-        for label, column in available_filters.items()
+    st.header("2. Sequential screening funnel")
+    st.markdown(
+        """
+        The rules are applied in order: **STA → SNOA → Altman Z-Score**. Each rule
+        receives only the companies that passed the previous rule. Missing values
+        for a rule are excluded at that stage and counted separately.
+        """
+    )
+
+    metric_labels = {
+        "STA": "STA (scaled total accruals)",
+        "SNOA": "SNOA (scaled net operating assets)",
+        "Altman Z": "Altman Z-Score",
     }
-    usable_filters = {
-        label: column for label, column in available_filters.items()
-        if slider_data[label] is not None
-    }
-    empty_filters = [label for label in available_filters if slider_data[label] is None]
+    missing_metrics = [metric_labels[key] for key in metric_labels if key not in data.columns]
+    if missing_metrics:
+        st.warning("Screening cannot use missing CSV columns: " + ", ".join(missing_metrics))
+
+    metrics_ready = all(metric in data.columns for metric in metric_labels)
+    if not metrics_ready:
+        st.error("The funnel requires STA, SNOA, and Altman Z columns in the screening CSV.")
+        st.stop()
 
     with st.sidebar:
-        st.header("Filters")
-        ticker_query = st.text_input("Search ticker", key="ticker_search")
-        selected_ranges = {}
-        filter_keys = [f"range_{label}" for label in usable_filters]
+        st.header("Screening thresholds")
+        cutoffs = {}
+        for metric in metric_labels:
+            settings = slider_settings(data[metric])
+            if settings is None:
+                cutoffs[metric] = None
+                st.caption(f"{metric_labels[metric]}: no numeric data")
+                continue
 
-        for label, column in usable_filters.items():
-            settings = slider_data[label]
-            key = f"range_{label}"
-            default_range = (settings["data_min"], settings["data_max"])
-            if key not in st.session_state:
-                st.session_state[key] = default_range
-
-            selected = st.slider(
-                label,
+            default = default_cutoff(metric, data[metric], settings)
+            cutoffs[metric] = st.slider(
+                f"{metric_labels[metric]} cutoff",
                 min_value=settings["slider_min"],
                 max_value=settings["slider_max"],
+                value=default,
                 step=settings["step"],
-                key=key,
+                key=f"cutoff_{metric}",
+                help=(
+                    "Keep values at or above this cutoff."
+                    if metric in {"STA", "SNOA"}
+                    else "Keep values at or below this cutoff."
+                ),
             )
-            selected_ranges[column] = selected
             st.caption(
-                f"Data: {format_bound(settings['data_min'])} to "
-                f"{format_bound(settings['data_max'])} · Selected: "
-                f"{format_bound(selected[0])} to {format_bound(selected[1])}"
+                f"Observed data range: {settings['data_min']:.6g} to "
+                f"{settings['data_max']:.6g}"
             )
-            missing_count = pd.to_numeric(df[column], errors="coerce").isna().sum()
-            if missing_count:
-                st.caption(f"{missing_count} rows with missing {label} are excluded by this filter.")
-
-        for label in empty_filters:
-            st.caption(f"{label}: unavailable (no numeric values in the CSV)")
 
         st.button(
-            "Reset filters",
-            on_click=reset_filters,
-            args=(filter_keys,),
+            "Reset cutoffs",
+            on_click=reset_cutoffs,
+            args=(list(metric_labels),),
             width="stretch",
         )
 
-    filtered = apply_filters(df, selected_ranges, ticker_query)
+    if any(value is None for value in cutoffs.values()):
+        st.error("At least one screening metric has no numeric data, so the funnel cannot run.")
+        st.stop()
 
-    st.subheader("Summary")
-    summary_columns = st.columns(3)
-    summary_columns[0].metric("Companies remaining", len(filtered))
-    summary_columns[1].metric("Companies in source CSV", len(df))
-    average_score = filtered[SCORE_COLUMN].mean() if SCORE_COLUMN in filtered.columns else float("nan")
-    summary_columns[2].metric(
-        "Average Financial Strength Score",
-        f"{average_score:.2f}" if pd.notna(average_score) else "Unavailable",
+    st.markdown(
+        """
+        **Why these rules?** Higher positive STA can indicate that reported earnings
+        are less supported by operating cash flow. Higher SNOA is used as a signal
+        of greater operating-asset intensity. A lower Altman Z-Score can indicate
+        greater financial distress. These are screening signals—not forecasts or
+        investment advice.
+        """
     )
 
-    if filtered.empty:
-        st.warning("No companies match the current filters. Widen a range or clear the ticker search.")
-    else:
-        show_charts(filtered)
-
-    st.subheader("Filtered companies")
-    table_columns = [column for column in DISPLAY_COLUMNS if column in filtered.columns]
-    if filtered.empty:
-        st.info("The filtered table is empty.")
-    elif table_columns:
-        st.dataframe(filtered[table_columns], width="stretch", hide_index=True)
-    else:
-        st.dataframe(filtered, width="stretch", hide_index=True)
-
-    show_company_details(filtered)
-    st.download_button(
-        "Download filtered CSV",
-        data=filtered.to_csv(index=False).encode("utf-8"),
-        file_name="filtered_screening_results.csv",
-        mime="text/csv",
-        width="stretch",
+    shortlist, stages = apply_screening_funnel(
+        data,
+        sta_minimum=cutoffs["STA"],
+        snoa_minimum=cutoffs["SNOA"],
+        altman_z_maximum=cutoffs["Altman Z"],
     )
 
+    for stage in stages:
+        if "name" not in stage:
+            continue
+        with st.container(border=True):
+            st.markdown(f"**{stage['name']}** — {stage['threshold']}")
+            st.caption(
+                f"Input: {stage['input']} · Passed: {stage['passed']} · "
+                f"Excluded: {stage['excluded']} · Missing at this stage: {stage['missing']}"
+            )
+
+    st.header("3. Final short-list")
+    st.caption(
+        "Companies passing all three rules are research candidates only. The existing "
+        "financial-strength score ranges from 0 to 9, with lower scores indicating "
+        "fewer positive financial-strength signals in this screener."
+    )
+
+    score_valid, score_message = validate_score_definition(data)
+    if score_valid:
+        st.success(score_message)
+    else:
+        st.warning(score_message)
+
+    if shortlist.empty:
+        st.info("No companies currently pass all three screening rules. Adjust the cutoffs to explore other results.")
+        st.metric("Qualifying research candidates", 0)
+        st.stop()
+
+    st.metric("Companies passing all three rules", len(shortlist))
+    if not score_valid:
+        st.warning("A verified aggregate score is unavailable; candidates are shown without score ranking.")
+
+    result = shortlist.copy()
+    result["Screening reasons"] = result.apply(
+        lambda row: candidate_reasons(
+            row, cutoffs["STA"], cutoffs["SNOA"], cutoffs["Altman Z"]
+        ),
+        axis=1,
+    )
+
+    if score_valid:
+        score_values = pd.to_numeric(result[SCORE_COLUMN], errors="coerce")
+        result[SCORE_COLUMN] = score_values
+        result = result.sort_values(
+            by=[SCORE_COLUMN, "STA", "SNOA", "Altman Z"],
+            ascending=[True, False, False, True],
+            na_position="last",
+        )
+        ranked = result.head(10)
+        unranked_count = len(result) - result[SCORE_COLUMN].notna().sum()
+        if unranked_count:
+            st.caption(
+                f"{unranked_count} qualifying companies have no score and are shown "
+                "after score-ranked companies if space remains."
+            )
+    else:
+        ranked = result.sort_values("Ticker").head(10) if "Ticker" in result.columns else result.head(10)
+        st.caption("Because the saved score could not be verified, these rows are shown alphabetically, not score-ranked.")
+
+    displayed_count = len(ranked)
+    st.write(
+        f"Displaying {displayed_count} of {len(shortlist)} qualifying companies "
+        "(up to 10; no rows are duplicated)."
+    )
+    shortlist_columns = [
+        column
+        for column in [
+            "Ticker",
+            "STA",
+            "SNOA",
+            "Altman Z",
+            SCORE_COLUMN,
+            "Screening reasons",
+        ]
+        if column in ranked.columns
+    ]
+    st.dataframe(
+        ranked[shortlist_columns],
+        hide_index=True,
+        alt="Up to ten companies that passed all screening rules, ranked for further research",
+    )
 
 if __name__ == "__main__":
     main()
