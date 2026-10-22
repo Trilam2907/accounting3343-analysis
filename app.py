@@ -300,15 +300,18 @@ def main() -> None:
     path = source_csv_path()
     try:
         raw_data = load_data(str(path))
-    except FileNotFoundError:
-        st.error("Could not find `universe.csv` or `sp500_screening_results.csv`.")
-        st.stop()
-    except pd.errors.EmptyDataError:
-        st.error(f"`{path.name}` is empty.")
+    except (FileNotFoundError, pd.errors.EmptyDataError, pd.errors.ParserError, OSError) as exc:
+        st.error(
+            f"Could not load the screening dataset at `{path}`. "
+            f"Error: {exc}. Checked files: `{UNIVERSE_PATH}` and `{SCREENING_PATH}`."
+        )
         st.stop()
 
     if raw_data.empty:
-        st.error(f"`{path.name}` contains no company rows.")
+        st.error(
+            f"The screening dataset at `{path}` loaded 0 rows and contains no "
+            f"company records. Available columns: {', '.join(map(str, raw_data.columns)) or 'none'}."
+        )
         st.stop()
 
     data, formulas_recalculated = calculate_metrics_from_raw_inputs(raw_data)
@@ -319,15 +322,19 @@ def main() -> None:
         "Industry",
         INDUSTRY_OPTIONS,
         index=0,
-        key="industry_selection",
+        key=(
+            "industry_selection_with_sector"
+            if sector_column is not None
+            else "industry_selection_without_sector"
+        ),
+        disabled=sector_column is None,
     )
 
     if sector_column is None:
-        selected_data = data if industry_selection == "All industries" else data.iloc[0:0]
+        selected_data = data
         st.warning(
             "This dataset has no sector or industry column. Industry-specific "
-            "filtering cannot be applied reliably; choose “All industries” to "
-            "view the complete dataset."
+            "filters require sector data. All industries are shown."
         )
     else:
         industry_categories = data[sector_column].map(classify_sector)
@@ -347,15 +354,22 @@ def main() -> None:
                     f"{unknown_count} companies with missing sector data are not "
                     "included in this industry selection."
                 )
+        st.metric("Companies in selected industry", len(selected_data))
 
     st.header("Starting universe")
     company_count = (
-        selected_data["Ticker"].dropna().nunique()
-        if "Ticker" in selected_data.columns
-        else len(selected_data)
+        data["Ticker"].dropna().nunique() if "Ticker" in data.columns else len(data)
     )
     st.metric("Companies in starting universe", company_count)
     st.caption(f"Source file: `{path.name}`")
+    st.caption(
+        f"Loaded {len(raw_data):,} rows from `{path.resolve()}` "
+        f"with {raw_data.shape[1]} columns."
+    )
+    with st.expander("Dataset diagnostics"):
+        st.write(f"File path: `{path.resolve()}`")
+        st.write(f"Rows loaded: {len(raw_data):,}")
+        st.write(f"Available columns: {', '.join(map(str, raw_data.columns))}")
 
     if "Data Retrieval Date" in data.columns:
         retrieval_dates = data["Data Retrieval Date"].dropna().astype(str).unique()
