@@ -1,5 +1,7 @@
 import time
+from datetime import datetime, timezone
 from io import StringIO
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -20,6 +22,34 @@ def fetch_sp500_tickers():
         .str.replace(".", "-", regex=False)
         .tolist()
     )
+
+
+def load_universe_tickers():
+    """Use universe.csv tickers when supplied; otherwise fetch the S&P 500 list."""
+    universe_path = Path("universe.csv")
+    if not universe_path.is_file():
+        return fetch_sp500_tickers()
+
+    universe = pd.read_csv(universe_path)
+    ticker_column = next(
+        (column for column in ["Ticker", "Symbol", "ticker", "symbol"] if column in universe.columns),
+        None,
+    )
+    if ticker_column is None:
+        raise ValueError("universe.csv must contain a Ticker or Symbol column.")
+
+    tickers = (
+        universe[ticker_column]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .str.replace(".", "-", regex=False)
+        .tolist()
+    )
+    tickers = list(dict.fromkeys(ticker for ticker in tickers if ticker))
+    if not tickers:
+        raise ValueError("universe.csv does not contain any valid ticker symbols.")
+    return tickers
 
 
 def get_value(statement, row, period):
@@ -69,7 +99,7 @@ def calculate_metrics(ticker):
 
     current = periods[0]
     previous = periods[1]
-    two_years_ago = periods[2] if len(periods) >= 3 else previous
+    two_years_ago = periods[2] if len(periods) >= 3 else None
 
     def inc(row, period):
         return get_value(income, row, period)
@@ -80,66 +110,51 @@ def calculate_metrics(ticker):
     def cf(row, period):
         return get_value(cashflow, row, period)
 
-    ni = first_available(
+    ni_reported = first_available(
         income,
         ["Net Income", "Net Income Common Stockholders", "Net Income Continuous Operations"],
         current,
     )
-    if pd.isna(ni):
-        ni = 0.0
+    ni = ni_reported
 
     ni_prev = first_available(
         income,
         ["Net Income", "Net Income Common Stockholders", "Net Income Continuous Operations"],
         previous,
     )
-    if pd.isna(ni_prev):
-        ni_prev = 0.0
 
-    cfo = first_available(
+    cfo_reported = first_available(
         cashflow,
         ["Operating Cash Flow", "Cash Flow From Continuing Operating Activities"],
         current,
     )
-    if pd.isna(cfo):
-        cfo = 0.0
+    cfo = cfo_reported
 
     assets = bal("Total Assets", current)
     assets_prev = bal("Total Assets", previous)
     assets_2prev = bal("Total Assets", two_years_ago)
-    if pd.isna(assets_prev):
-        assets_prev = assets
-    if pd.isna(assets_2prev):
-        assets_2prev = assets_prev
 
     sales = first_available(income, ["Total Revenue", "Operating Revenue"], current)
-    if pd.isna(sales):
-        sales = 0.0
 
     sales_prev = first_available(income, ["Total Revenue", "Operating Revenue"], previous)
-    if pd.isna(sales_prev):
-        sales_prev = sales
 
     gross_profit = first_available(income, ["Gross Profit"], current)
-    if pd.isna(gross_profit):
-        gross_profit = sales
 
     gross_profit_prev = first_available(income, ["Gross Profit"], previous)
-    if pd.isna(gross_profit_prev):
-        gross_profit_prev = sales_prev
 
     ebit = first_available(
         income,
         ["EBIT", "Operating Income", "Total Operating Income As Reported"],
         current,
     )
-    if pd.isna(ebit):
-        ebit = ni
 
     sta = (
-        (ni - cfo) / assets
-        if pd.notna(ni) and pd.notna(cfo) and pd.notna(assets) and assets != 0
-        else 0.0
+        (ni_reported - cfo_reported) / assets
+        if pd.notna(ni_reported)
+        and pd.notna(cfo_reported)
+        and pd.notna(assets)
+        and assets > 0
+        else np.nan
     )
 
     cash = first_available(
@@ -151,38 +166,6 @@ def calculate_metrics(ticker):
         ],
         current,
     )
-    if pd.isna(cash):
-        cash = 0.0
-
-    current_debt = first_available(
-        balance,
-        [
-            "Current Debt And Capital Lease Obligation",
-            "Current Debt",
-            "Current Debt And Finance Lease Obligation",
-            "Commercial Paper",
-        ],
-        current,
-    )
-    if pd.isna(current_debt):
-        current_debt = 0.0
-
-    long_debt = first_available(
-        balance,
-        [
-            "Long Term Debt And Capital Lease Obligation",
-            "Long Term Debt",
-            "Long Term Debt And Finance Lease Obligation",
-        ],
-        current,
-    )
-    if pd.isna(long_debt):
-        long_debt = 0.0
-
-    minority = first_available(balance, ["Minority Interest", "Non Controlling Interest"], current)
-    if pd.isna(minority):
-        minority = 0.0
-
     equity = first_available(
         balance,
         [
@@ -193,14 +176,39 @@ def calculate_metrics(ticker):
         ],
         current,
     )
-    if pd.isna(equity):
-        equity = assets - long_debt - current_debt
 
-    snoa = 0.0
-    if pd.notna(assets) and assets != 0 and pd.notna(equity):
-        operating_assets = assets - cash
-        operating_liabilities = assets - current_debt - long_debt - minority - equity
-        snoa = (operating_assets - operating_liabilities) / assets
+    short_term_debt = first_available(
+        balance,
+        [
+            "Current Debt And Capital Lease Obligation",
+            "Current Debt",
+            "Current Debt And Finance Lease Obligation",
+            "Commercial Paper",
+        ],
+        current,
+    )
+    long_term_debt = first_available(
+        balance,
+        [
+            "Long Term Debt And Capital Lease Obligation",
+            "Long Term Debt",
+            "Long Term Debt And Finance Lease Obligation",
+        ],
+        current,
+    )
+    total_debt = first_available(balance, ["Total Debt"], current)
+    if pd.isna(total_debt) and pd.notna(short_term_debt) and pd.notna(long_term_debt):
+        total_debt = short_term_debt + long_term_debt
+
+    snoa = (
+        (total_debt + equity - cash) / assets_prev
+        if pd.notna(total_debt)
+        and pd.notna(equity)
+        and pd.notna(cash)
+        and pd.notna(assets_prev)
+        and assets_prev > 0
+        else np.nan
+    )
 
     working_capital = bal("Working Capital", current)
     if pd.isna(working_capital):
@@ -208,51 +216,60 @@ def calculate_metrics(ticker):
         cl = bal("Current Liabilities", current)
         if pd.notna(ca) and pd.notna(cl):
             working_capital = ca - cl
-        else:
-            working_capital = 0.0
 
     retained = first_available(balance, ["Retained Earnings"], current)
-    if pd.isna(retained):
-        retained = 0.0
 
     liabilities = first_available(balance, ["Total Liabilities Net Minority Interest", "Total Liabilities"], current)
-    if pd.isna(liabilities):
-        liabilities = assets - equity if pd.notna(equity) else assets
 
     try:
         market_cap = stock.info.get("marketCap", np.nan)
     except Exception:
         market_cap = np.nan
-    if pd.isna(market_cap):
-        market_cap = assets
 
-    z = 0.0
-    if pd.notna(assets) and assets > 0:
+    z = np.nan
+    if (
+        pd.notna(assets)
+        and assets > 0
+        and pd.notna(working_capital)
+        and pd.notna(retained)
+        and pd.notna(ebit)
+        and pd.notna(market_cap)
+        and pd.notna(liabilities)
+        and liabilities > 0
+        and pd.notna(sales)
+    ):
         x1 = working_capital / assets
         x2 = retained / assets
         x3 = ebit / assets
-        x4 = market_cap / liabilities if pd.notna(liabilities) and liabilities > 0 else 1.0
-        x5 = sales / assets if pd.notna(sales) else 0.0
+        x4 = market_cap / liabilities
+        x5 = sales / assets
 
         z = 1.2 * x1 + 1.4 * x2 + 3.3 * x3 + 0.6 * x4 + 1.0 * x5
 
-    if z > 2.99:
+    if pd.isna(z):
+        z_class = "Insufficient Data"
+    elif z > 2.99:
         z_class = "Safe"
     elif z >= 1.81:
         z_class = "Grey"
     else:
         z_class = "Distress"
 
-    roa = ni / assets_prev if (pd.notna(ni) and pd.notna(assets_prev) and assets_prev != 0) else 0.0
-    cfo_roa = cfo / assets_prev if (pd.notna(cfo) and pd.notna(assets_prev) and assets_prev != 0) else 0.0
-    roa_prev = ni_prev / assets_2prev if (pd.notna(ni_prev) and pd.notna(assets_2prev) and assets_2prev != 0) else 0.0
+    roa = ni / assets_prev if pd.notna(ni) and pd.notna(assets_prev) and assets_prev > 0 else np.nan
+    cfo_roa = cfo / assets_prev if pd.notna(cfo) and pd.notna(assets_prev) and assets_prev > 0 else np.nan
+    roa_prev = ni_prev / assets_2prev if pd.notna(ni_prev) and pd.notna(assets_2prev) and assets_2prev > 0 else np.nan
 
-    p1 = int(roa > 0)
-    p2 = int(cfo_roa > 0)
-    p3 = int(roa > roa_prev)
-    p4 = int(cfo > ni) if pd.notna(cfo) and pd.notna(ni) else 0
+    p1 = int(roa > 0) if pd.notna(roa) else np.nan
+    p2 = int(cfo_roa > 0) if pd.notna(cfo_roa) else np.nan
+    p3 = int(roa > roa_prev) if pd.notna(roa) and pd.notna(roa_prev) else np.nan
+    p4 = int(cfo > ni) if pd.notna(cfo) and pd.notna(ni) else np.nan
 
-    profitability_score = sum([p1, p2, p3, p4])
+    profitability_signals = [p1, p2, p3, p4]
+    profitability_score = (
+        sum(profitability_signals)
+        if all(pd.notna(signal) for signal in profitability_signals)
+        else np.nan
+    )
 
     long_debt_prev = first_available(
         balance,
@@ -263,53 +280,81 @@ def calculate_metrics(ticker):
         ],
         previous,
     )
-    if pd.isna(long_debt_prev):
-        long_debt_prev = 0.0
+    leverage = long_term_debt / assets if pd.notna(long_term_debt) and pd.notna(assets) and assets > 0 else np.nan
+    leverage_prev = long_debt_prev / assets_prev if pd.notna(long_debt_prev) and pd.notna(assets_prev) and assets_prev > 0 else np.nan
 
-    leverage = long_debt / assets if (pd.notna(assets) and assets != 0) else 0.0
-    leverage_prev = long_debt_prev / assets_prev if (pd.notna(assets_prev) and assets_prev != 0) else 0.0
-
+    current_assets = bal("Current Assets", current)
+    current_liabilities = bal("Current Liabilities", current)
+    previous_current_assets = bal("Current Assets", previous)
+    previous_current_liabilities = bal("Current Liabilities", previous)
     current_ratio = (
-        bal("Current Assets", current) / bal("Current Liabilities", current)
-        if pd.notna(bal("Current Assets", current))
-        and pd.notna(bal("Current Liabilities", current))
-        and bal("Current Liabilities", current) != 0
-        else 1.0
+        current_assets / current_liabilities
+        if pd.notna(current_assets) and pd.notna(current_liabilities) and current_liabilities > 0
+        else np.nan
     )
     current_ratio_prev = (
-        bal("Current Assets", previous) / bal("Current Liabilities", previous)
-        if pd.notna(bal("Current Assets", previous))
-        and pd.notna(bal("Current Liabilities", previous))
-        and bal("Current Liabilities", previous) != 0
-        else 1.0
+        previous_current_assets / previous_current_liabilities
+        if pd.notna(previous_current_assets)
+        and pd.notna(previous_current_liabilities)
+        and previous_current_liabilities > 0
+        else np.nan
     )
 
-    l1 = int(leverage < leverage_prev)
-    l2 = int(current_ratio > current_ratio_prev)
+    l1 = int(leverage < leverage_prev) if pd.notna(leverage) and pd.notna(leverage_prev) else np.nan
+    l2 = int(current_ratio > current_ratio_prev) if pd.notna(current_ratio) and pd.notna(current_ratio_prev) else np.nan
 
     net_issuance = first_available(
         cashflow,
         ["Net Common Stock Issuance", "Proceeds From Stock Option Exercises"],
         current,
     )
-    l3 = int(net_issuance <= 0) if pd.notna(net_issuance) else 1
-    funding_score = sum([l1, l2, l3])
+    l3 = int(net_issuance <= 0) if pd.notna(net_issuance) else np.nan
+    funding_signals = [l1, l2, l3]
+    funding_score = (
+        sum(funding_signals)
+        if all(pd.notna(signal) for signal in funding_signals)
+        else np.nan
+    )
 
-    margin = gross_profit / sales if (pd.notna(sales) and sales != 0) else 0.0
-    margin_prev = gross_profit_prev / sales_prev if (pd.notna(sales_prev) and sales_prev != 0) else 0.0
+    margin = gross_profit / sales if pd.notna(gross_profit) and pd.notna(sales) and sales != 0 else np.nan
+    margin_prev = gross_profit_prev / sales_prev if pd.notna(gross_profit_prev) and pd.notna(sales_prev) and sales_prev != 0 else np.nan
 
-    turnover = sales / assets_prev if (pd.notna(assets_prev) and assets_prev != 0) else 0.0
-    turnover_prev = sales_prev / assets_2prev if (pd.notna(assets_2prev) and assets_2prev != 0) else 0.0
+    turnover = sales / assets_prev if pd.notna(sales) and pd.notna(assets_prev) and assets_prev > 0 else np.nan
+    turnover_prev = sales_prev / assets_2prev if pd.notna(sales_prev) and pd.notna(assets_2prev) and assets_2prev > 0 else np.nan
 
-    e1 = int(margin > margin_prev)
-    e2 = int(turnover > turnover_prev)
-    efficiency_score = sum([e1, e2])
+    e1 = int(margin > margin_prev) if pd.notna(margin) and pd.notna(margin_prev) else np.nan
+    e2 = int(turnover > turnover_prev) if pd.notna(turnover) and pd.notna(turnover_prev) else np.nan
+    efficiency_signals = [e1, e2]
+    efficiency_score = (
+        sum(efficiency_signals)
+        if all(pd.notna(signal) for signal in efficiency_signals)
+        else np.nan
+    )
 
-    total_score = profitability_score + funding_score + efficiency_score
+    total_score = (
+        profitability_score + funding_score + efficiency_score
+        if pd.notna(profitability_score)
+        and pd.notna(funding_score)
+        and pd.notna(efficiency_score)
+        else np.nan
+    )
 
     return {
         "Ticker": ticker,
         "Latest Fiscal Year": current.year if hasattr(current, "year") else current,
+        "Net Income": ni_reported,
+        "Operating Cash Flow": cfo_reported,
+        "Total Assets": assets,
+        "Prior-Year Total Assets": assets_prev,
+        "Total Debt": total_debt,
+        "Equity": equity,
+        "Cash": cash,
+        "Working Capital": working_capital,
+        "Retained Earnings": retained,
+        "EBIT": ebit,
+        "Market Value of Equity": market_cap,
+        "Total Liabilities": liabilities,
+        "Sales": sales,
         "STA": sta,
         "SNOA": snoa,
         "Altman Z": z,
@@ -325,16 +370,27 @@ def calculate_metrics(ticker):
 
 
 def main():
-    tickers = fetch_sp500_tickers()
+    tickers = load_universe_tickers()
     results = []
     errors = []
+    retrieval_date = datetime.now(timezone.utc).date().isoformat()
 
     for i, ticker in enumerate(tickers, start=1):
         try:
             result = calculate_metrics(ticker)
+            result["Data Retrieval Date"] = retrieval_date
+            if "Error" in result:
+                result["Data Error"] = result.pop("Error")
             results.append(result)
         except Exception as exc:  # pragma: no cover - data quality fallback
             errors.append({"Ticker": ticker, "Error": str(exc)})
+            results.append(
+                {
+                    "Ticker": ticker,
+                    "Data Retrieval Date": retrieval_date,
+                    "Data Error": str(exc),
+                }
+            )
 
         if i % 25 == 0:
             print(f"Processed {i}/{len(tickers)} companies")
@@ -342,10 +398,17 @@ def main():
 
     screen_df = pd.DataFrame(results)
     errors_df = pd.DataFrame(errors, columns=["Ticker", "Error"])
+    screen_df.to_csv("universe.csv", index=False)
+    screen_df.to_csv("sp500_screening_results.csv", index=False)
+
+    if "Financial Strength Score (0-9)" not in screen_df.columns:
+        print("No P-Score values were generated.")
+        errors_df.to_csv("screening_errors.csv", index=False)
+        return
+
     ranked_df = screen_df.dropna(subset=["Financial Strength Score (0-9)"]).copy()
     ranked_df = ranked_df.sort_values(by="Financial Strength Score (0-9)", ascending=True)
 
-    screen_df.to_csv("sp500_screening_results.csv", index=False)
     errors_df.to_csv("screening_errors.csv", index=False)
 
     print("\nCompanies processed:", len(results))

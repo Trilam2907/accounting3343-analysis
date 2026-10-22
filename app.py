@@ -1,369 +1,467 @@
 from pathlib import Path
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 
-DATA_PATH = Path(__file__).resolve().with_name("sp500_screening_results.csv")
+APP_DIR = Path(__file__).resolve().parent
+UNIVERSE_PATH = APP_DIR / "universe.csv"
+SCREENING_PATH = APP_DIR / "sp500_screening_results.csv"
 SCORE_COLUMN = "Financial Strength Score (0-9)"
 SCORE_COMPONENTS = [
     "Profitability Score (0-4)",
     "Funding Score (0-3)",
     "Efficiency Score (0-2)",
 ]
-KEY_COLUMNS = [
-    "Ticker",
-    "STA",
-    "SNOA",
-    "Altman Z",
-    "Risk Classification",
-    SCORE_COLUMN,
+RAW_METRIC_COLUMNS = [
+    "Net Income",
+    "Operating Cash Flow",
+    "Total Assets",
+    "Prior-Year Total Assets",
+    "Total Debt",
+    "Equity",
+    "Cash",
+    "Working Capital",
+    "Retained Earnings",
+    "EBIT",
+    "Market Value of Equity",
+    "Total Liabilities",
+    "Sales",
 ]
+FLAG_COLUMNS = [
+    "STA percentile flag",
+    "SNOA percentile flag",
+    "Altman Z flag",
+]
+CONCLUSION_BY_FLAGS = {
+    3: "High-priority short research candidate",
+    2: "Potential short research candidate",
+    1: "Watchlist — limited warning signals",
+    0: "Not flagged by this screen",
+}
 
 
 @st.cache_data
 def load_data(path: str) -> pd.DataFrame:
-    """Load saved screening results without fetching stock data."""
+    """Read the saved CSV only; no stock-data requests are made by the dashboard."""
     return pd.read_csv(path)
 
 
-def validate_score_definition(data: pd.DataFrame) -> tuple[bool, str]:
-    """Check that the saved aggregate matches the formula in financial_screen.py."""
+def source_csv_path() -> Path:
+    """Prefer the full universe file and fall back to the generated results CSV."""
+    return UNIVERSE_PATH if UNIVERSE_PATH.is_file() else SCREENING_PATH
+
+
+def calculate_metrics_from_raw_inputs(data: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+    """Recalculate the requested ratios when their source values are available."""
+    result = data.copy()
+    if not all(column in result.columns for column in RAW_METRIC_COLUMNS):
+        return result, False
+
+    numeric = result[RAW_METRIC_COLUMNS].apply(pd.to_numeric, errors="coerce")
+    total_assets = numeric["Total Assets"]
+    prior_assets = numeric["Prior-Year Total Assets"]
+
+    sta_valid = (
+        numeric["Net Income"].notna()
+        & numeric["Operating Cash Flow"].notna()
+        & total_assets.gt(0)
+    )
+    result["STA"] = (
+        (numeric["Net Income"] - numeric["Operating Cash Flow"]) / total_assets
+    ).where(sta_valid)
+
+    snoa_valid = (
+        numeric["Total Debt"].notna()
+        & numeric["Equity"].notna()
+        & numeric["Cash"].notna()
+        & prior_assets.gt(0)
+    )
+    result["SNOA"] = (
+        (numeric["Total Debt"] + numeric["Equity"] - numeric["Cash"])
+        / prior_assets
+    ).where(snoa_valid)
+
+    altman_valid = (
+        total_assets.gt(0)
+        & numeric["Working Capital"].notna()
+        & numeric["Retained Earnings"].notna()
+        & numeric["EBIT"].notna()
+        & numeric["Market Value of Equity"].notna()
+        & numeric["Total Liabilities"].gt(0)
+        & numeric["Sales"].notna()
+    )
+    result["Altman Z"] = (
+        1.2 * numeric["Working Capital"] / total_assets
+        + 1.4 * numeric["Retained Earnings"] / total_assets
+        + 3.3 * numeric["EBIT"] / total_assets
+        + 0.6 * numeric["Market Value of Equity"] / numeric["Total Liabilities"]
+        + numeric["Sales"] / total_assets
+    ).where(altman_valid)
+    return result, True
+
+
+def validate_p_score(data: pd.DataFrame) -> tuple[bool, str]:
+    """Validate the saved nine-signal total against its three documented groups."""
     required = [SCORE_COLUMN, *SCORE_COMPONENTS]
     missing = [column for column in required if column not in data.columns]
     if missing:
-        return False, f"Cannot validate the saved score; missing columns: {', '.join(missing)}."
+        return False, "P-Score unavailable; missing columns: " + ", ".join(missing)
 
-    components = data[SCORE_COMPONENTS].apply(pd.to_numeric, errors="coerce")
-    saved_score = pd.to_numeric(data[SCORE_COLUMN], errors="coerce")
-    calculated_score = components.sum(axis=1, min_count=len(SCORE_COMPONENTS))
-    comparable = saved_score.notna() & calculated_score.notna()
+    scores = data[SCORE_COMPONENTS + [SCORE_COLUMN]].apply(pd.to_numeric, errors="coerce")
+    expected = scores[SCORE_COMPONENTS].sum(axis=1, min_count=len(SCORE_COMPONENTS))
+    complete = expected.notna() & scores[SCORE_COLUMN].notna()
+    if not complete.any():
+        return False, "P-Score could not be validated because no complete score rows are present."
+    if not expected[complete].eq(scores.loc[complete, SCORE_COLUMN]).all():
+        return False, "Saved P-Score does not match Profitability + Funding + Efficiency."
 
-    if not comparable.any():
-        return False, "Cannot validate the saved score because there are no complete score rows."
-    if not calculated_score[comparable].eq(saved_score[comparable]).all():
-        return False, "The saved aggregate does not match Profitability + Funding + Efficiency."
-    if saved_score.isna().any() or calculated_score.isna().any():
-        return False, "Some rows have missing score inputs or aggregates; those rows cannot be ranked."
-
-    return True, "Saved score verified: Profitability + Funding + Efficiency (range 0–9)."
-
-
-def slider_settings(series: pd.Series) -> dict | None:
-    """Return data-derived slider bounds, with safe handling for constants and missing values."""
-    values = pd.to_numeric(series, errors="coerce").dropna()
-    if values.empty:
-        return None
-
-    data_min = float(values.min())
-    data_max = float(values.max())
-    slider_min = data_min
-    slider_max = data_max
-    if data_min == data_max:
-        padding = max(abs(data_min) * 0.1, 1.0)
-        slider_min -= padding
-        slider_max += padding
-
-    span = slider_max - slider_min
-    step = 1.0 if values.astype(float).map(lambda value: value.is_integer()).all() else max(span / 1000, 0.000001)
-    return {
-        "data_min": data_min,
-        "data_max": data_max,
-        "slider_min": slider_min,
-        "slider_max": slider_max,
-        "step": step,
-    }
+    incomplete_count = int((~complete).sum())
+    message = "P-Score verified as Profitability (4) + Funding (3) + Efficiency (2), maximum 9."
+    if incomplete_count:
+        message += f" {incomplete_count} rows have incomplete score inputs and are not fully score-confirmed."
+    return True, message
 
 
-def default_cutoff(metric: str, series: pd.Series, settings: dict) -> float:
-    """Use intuitive screening defaults, clamped to the observed data range."""
-    values = pd.to_numeric(series, errors="coerce").dropna()
-    defaults = {
-        "STA": 0.0,
-        "SNOA": float(values.median()) if not values.empty else settings["data_min"],
-        "Altman Z": 2.99,
-    }
-    value = defaults[metric]
-    return min(max(value, settings["data_min"]), settings["data_max"])
-
-
-def reset_cutoffs(metrics: list[str]) -> None:
-    for metric in metrics:
-        st.session_state.pop(f"cutoff_{metric}", None)
-
-
-def apply_screening_funnel(
+def add_percentile_flags(
     data: pd.DataFrame,
-    sta_minimum: float,
-    snoa_minimum: float,
-    altman_z_maximum: float,
-) -> tuple[pd.DataFrame, list[dict]]:
-    """Apply the three rules sequentially and report each stage's pass/exclusion counts."""
-    rules = [
-        ("STA", "STA", lambda values: values >= sta_minimum, f"STA ≥ {sta_minimum:.6g}"),
-        ("SNOA", "SNOA", lambda values: values >= snoa_minimum, f"SNOA ≥ {snoa_minimum:.6g}"),
-        ("Altman Z-Score", "Altman Z", lambda values: values <= altman_z_maximum, f"Altman Z ≤ {altman_z_maximum:.6g}"),
-    ]
-    current = data.copy()
-    stages = []
+    accrual_percentile: int,
+    altman_z_cutoff: float,
+) -> pd.DataFrame:
+    """Rank STA/SNOA across the whole input universe and calculate its three flags."""
+    result = data.copy()
+    for metric, percentile_column in [
+        ("STA", "STA percentile"),
+        ("SNOA", "SNOA percentile"),
+    ]:
+        if metric not in result.columns:
+            result[metric] = float("nan")
+        values = pd.to_numeric(result[metric], errors="coerce")
+        result[metric] = values
+        result[percentile_column] = values.rank(method="average", pct=True) * 100
 
-    for label, column, passes_rule, threshold_text in rules:
-        if column not in current.columns:
-            stages.append(
-                {
-                    "name": label,
-                    "threshold": threshold_text,
-                    "input": len(current),
-                    "passed": 0,
-                    "excluded": len(current),
-                    "missing": len(current),
-                    "unavailable": True,
-                }
-            )
-            current = current.iloc[0:0].copy()
-            continue
+    if "Altman Z" not in result.columns:
+        result["Altman Z"] = float("nan")
+    result["Altman Z"] = pd.to_numeric(result["Altman Z"], errors="coerce")
 
-        values = pd.to_numeric(current[column], errors="coerce")
-        available = values.notna()
-        missing_count = int((~available).sum())
-        pass_mask = available & passes_rule(values)
-        passed = current.loc[pass_mask].copy()
-        input_count = len(current)
-        stages.append(
-            {
-                "name": label,
-                "threshold": threshold_text,
-                "input": input_count,
-                "passed": len(passed),
-                "excluded": input_count - len(passed),
-                "missing": missing_count,
-                "unavailable": False,
-            }
-        )
-        current = passed
+    flag_values = pd.DataFrame(
+        {
+            FLAG_COLUMNS[0]: result["STA percentile"].ge(accrual_percentile).where(
+                result["STA percentile"].notna()
+            ),
+            FLAG_COLUMNS[1]: result["SNOA percentile"].ge(accrual_percentile).where(
+                result["SNOA percentile"].notna()
+            ),
+            FLAG_COLUMNS[2]: result["Altman Z"].lt(altman_z_cutoff).where(
+                result["Altman Z"].notna()
+            ),
+        },
+        index=result.index,
+    ).astype("boolean")
 
-    return current.reset_index(drop=True), stages
-
-
-def candidate_reasons(row: pd.Series, sta_minimum: float, snoa_minimum: float, altman_z_maximum: float) -> str:
-    return (
-        f"STA {row['STA']:.4g} ≥ {sta_minimum:.4g}; "
-        f"SNOA {row['SNOA']:.4g} ≥ {snoa_minimum:.4g}; "
-        f"Altman Z {row['Altman Z']:.4g} ≤ {altman_z_maximum:.4g}"
+    result[FLAG_COLUMNS] = flag_values
+    result["Total red flags"] = flag_values.fillna(False).astype(int).sum(axis=1)
+    result["Unavailable flags"] = flag_values.isna().sum(axis=1)
+    result["Investment conclusion"] = result["Total red flags"].map(
+        CONCLUSION_BY_FLAGS
     )
+    return result
+
+
+def qualify_companies(data: pd.DataFrame, minimum_flags: int) -> pd.DataFrame:
+    """A known, triggered flag counts; unavailable flags are separately disclosed."""
+    return data.loc[data["Total red flags"].ge(minimum_flags)].copy()
+
+
+def build_funnel_counts(data: pd.DataFrame, minimum_flags: int) -> pd.DataFrame:
+    """Build nested company counts by the minimum number of observed red flags."""
+    flag_counts = data["Total red flags"]
+    counts = [
+        ("Starting universe", len(data)),
+        ("At least 1 red flag", int(flag_counts.ge(1).sum())),
+        ("At least 2 red flags", int(flag_counts.ge(2).sum())),
+        ("3 red flags", int(flag_counts.ge(3).sum())),
+        (f"Qualifying (≥ {minimum_flags})", int(flag_counts.ge(minimum_flags).sum())),
+    ]
+    return pd.DataFrame(counts, columns=["Screening stage", "Companies"])
+
+
+def rank_candidates(data: pd.DataFrame) -> pd.DataFrame:
+    """Prioritize more flags, then weaker P-Score; use financial flags to break ties."""
+    result = data.copy()
+    if SCORE_COLUMN not in result.columns:
+        result[SCORE_COLUMN] = float("nan")
+    result[SCORE_COLUMN] = pd.to_numeric(result[SCORE_COLUMN], errors="coerce")
+    ordering = [
+        "Total red flags",
+        SCORE_COLUMN,
+        "STA percentile",
+        "SNOA percentile",
+        "Altman Z",
+    ]
+    ascending = [False, True, False, False, True]
+    existing = [column for column in ordering if column in result.columns]
+    directions = [ascending[ordering.index(column)] for column in existing]
+    return result.sort_values(
+        existing,
+        ascending=directions,
+        na_position="last",
+        kind="stable",
+    )
+
+
+def flag_label(value: object) -> str:
+    if pd.isna(value):
+        return "Unavailable"
+    return "Flag" if bool(value) else "No flag"
 
 
 def main() -> None:
-    st.set_page_config(page_title="S&P 500 short-candidate research screen", layout="wide")
-    st.title("S&P 500 short-candidate research screen")
+    st.set_page_config(page_title="S&P 500 short research screen", layout="wide")
+    st.title("S&P 500 short research screen")
     st.write(
-        "This workflow narrows the full saved S&P 500 dataset using three transparent "
-        "financial-risk signals. It identifies companies for further research, not "
-        "guaranteed short positions."
+        "This screen highlights companies for additional research. It does not "
+        "identify guaranteed profitable short positions or provide investment advice."
     )
 
+    path = source_csv_path()
     try:
-        data = load_data(str(DATA_PATH))
+        raw_data = load_data(str(path))
     except FileNotFoundError:
-        st.error(f"Could not find `{DATA_PATH.name}`. Keep it in the same folder as `app.py`.")
+        st.error("Could not find `universe.csv` or `sp500_screening_results.csv`.")
         st.stop()
     except pd.errors.EmptyDataError:
-        st.error(f"`{DATA_PATH.name}` is empty.")
+        st.error(f"`{path.name}` is empty.")
         st.stop()
 
-    if data.empty:
-        st.error("The screening results file contains no company rows.")
+    if raw_data.empty:
+        st.error(f"`{path.name}` contains no company rows.")
         st.stop()
 
-    st.header("1. Starting universe")
-    initial_count = data["Ticker"].nunique() if "Ticker" in data.columns else len(data)
-    st.metric("Companies in the starting dataset", initial_count)
+    data, formulas_recalculated = calculate_metrics_from_raw_inputs(raw_data)
+    score_valid, score_message = validate_p_score(data)
 
-    universe_search = st.text_input(
-        "Search the starting-universe table by ticker",
-        key="universe_search",
-        help="This search changes the table shown here only; the funnel always starts with the complete dataset.",
+    st.header("Starting universe")
+    company_count = (
+        data["Ticker"].dropna().nunique() if "Ticker" in data.columns else len(data)
     )
-    universe_table = data.copy()
-    if universe_search.strip() and "Ticker" in universe_table.columns:
-        universe_table = universe_table[
-            universe_table["Ticker"].astype("string").str.contains(
-                universe_search.strip(), case=False, na=False, regex=False
-            )
-        ]
+    st.metric("Companies in starting universe", company_count)
+    st.caption(f"Source file: `{path.name}`")
 
-    universe_columns = [column for column in KEY_COLUMNS if column in data.columns]
-    if universe_table.empty:
-        st.info("No starting-universe rows match that ticker search.")
+    if "Data Retrieval Date" in data.columns:
+        retrieval_dates = data["Data Retrieval Date"].dropna().astype(str).unique()
+        if len(retrieval_dates) == 1:
+            st.caption(f"Data retrieved: {retrieval_dates[0]} (UTC)")
+        elif len(retrieval_dates) > 1:
+            st.caption(
+                "Data retrieval dates vary by row: "
+                + ", ".join(sorted(retrieval_dates)[:5])
+            )
+        else:
+            st.warning("The source file has no recorded data retrieval date.")
     else:
-        st.dataframe(
-            universe_table[universe_columns],
-            height=360,
-            hide_index=True,
-            alt="Searchable starting universe with key financial screening metrics",
+        st.warning(
+            "This CSV has no recorded data retrieval date. Its exact data age cannot be confirmed."
         )
 
-    st.header("2. Sequential screening funnel")
-    st.markdown(
-        """
-        The rules are applied in order: **STA → SNOA → Altman Z-Score**. Each rule
-        receives only the companies that passed the previous rule. Missing values
-        for a rule are excluded at that stage and counted separately.
-        """
-    )
-
-    metric_labels = {
-        "STA": "STA (scaled total accruals)",
-        "SNOA": "SNOA (scaled net operating assets)",
-        "Altman Z": "Altman Z-Score",
-    }
-    missing_metrics = [metric_labels[key] for key in metric_labels if key not in data.columns]
-    if missing_metrics:
-        st.warning("Screening cannot use missing CSV columns: " + ", ".join(missing_metrics))
-
-    metrics_ready = all(metric in data.columns for metric in metric_labels)
-    if not metrics_ready:
-        st.error("The funnel requires STA, SNOA, and Altman Z columns in the screening CSV.")
-        st.stop()
-
-    with st.sidebar:
-        st.header("Screening thresholds")
-        cutoffs = {}
-        for metric in metric_labels:
-            settings = slider_settings(data[metric])
-            if settings is None:
-                cutoffs[metric] = None
-                st.caption(f"{metric_labels[metric]}: no numeric data")
-                continue
-
-            default = default_cutoff(metric, data[metric], settings)
-            cutoffs[metric] = st.slider(
-                f"{metric_labels[metric]} cutoff",
-                min_value=settings["slider_min"],
-                max_value=settings["slider_max"],
-                value=default,
-                step=settings["step"],
-                key=f"cutoff_{metric}",
-                help=(
-                    "Keep values at or above this cutoff."
-                    if metric in {"STA", "SNOA"}
-                    else "Keep values at or below this cutoff."
-                ),
-            )
-            st.caption(
-                f"Observed data range: {settings['data_min']:.6g} to "
-                f"{settings['data_max']:.6g}"
-            )
-
-        st.button(
-            "Reset cutoffs",
-            on_click=reset_cutoffs,
-            args=(list(metric_labels),),
-            width="stretch",
+    if not formulas_recalculated:
+        st.warning(
+            "Raw inputs for STA, Scaled NOA, and Altman Z are not all present. "
+            "Precalculated CSV metrics are being used; their formulas cannot be "
+            "recalculated from this file. Run `financial_screen.py` to refresh "
+            "universe.csv with the documented raw inputs."
         )
-
-    if any(value is None for value in cutoffs.values()):
-        st.error("At least one screening metric has no numeric data, so the funnel cannot run.")
-        st.stop()
-
-    st.markdown(
-        """
-        **Why these rules?** Higher positive STA can indicate that reported earnings
-        are less supported by operating cash flow. Higher SNOA is used as a signal
-        of greater operating-asset intensity. A lower Altman Z-Score can indicate
-        greater financial distress. These are screening signals—not forecasts or
-        investment advice.
-        """
-    )
-
-    shortlist, stages = apply_screening_funnel(
-        data,
-        sta_minimum=cutoffs["STA"],
-        snoa_minimum=cutoffs["SNOA"],
-        altman_z_maximum=cutoffs["Altman Z"],
-    )
-
-    for stage in stages:
-        if "name" not in stage:
-            continue
-        with st.container(border=True):
-            st.markdown(f"**{stage['name']}** — {stage['threshold']}")
-            st.caption(
-                f"Input: {stage['input']} · Passed: {stage['passed']} · "
-                f"Excluded: {stage['excluded']} · Missing at this stage: {stage['missing']}"
-            )
-
-    st.header("3. Final short-list")
-    st.caption(
-        "Companies passing all three rules are research candidates only. The existing "
-        "financial-strength score ranges from 0 to 9, with lower scores indicating "
-        "fewer positive financial-strength signals in this screener."
-    )
-
-    score_valid, score_message = validate_score_definition(data)
     if score_valid:
-        st.success(score_message)
+        st.caption(score_message)
     else:
         st.warning(score_message)
 
-    if shortlist.empty:
-        st.info("No companies currently pass all three screening rules. Adjust the cutoffs to explore other results.")
-        st.metric("Qualifying research candidates", 0)
-        st.stop()
-
-    st.metric("Companies passing all three rules", len(shortlist))
-    if not score_valid:
-        st.warning("A verified aggregate score is unavailable; candidates are shown without score ranking.")
-
-    result = shortlist.copy()
-    result["Screening reasons"] = result.apply(
-        lambda row: candidate_reasons(
-            row, cutoffs["STA"], cutoffs["SNOA"], cutoffs["Altman Z"]
-        ),
-        axis=1,
-    )
-
-    if score_valid:
-        score_values = pd.to_numeric(result[SCORE_COLUMN], errors="coerce")
-        result[SCORE_COLUMN] = score_values
-        result = result.sort_values(
-            by=[SCORE_COLUMN, "STA", "SNOA", "Altman Z"],
-            ascending=[True, False, False, True],
-            na_position="last",
-        )
-        ranked = result.head(10)
-        unranked_count = len(result) - result[SCORE_COLUMN].notna().sum()
-        if unranked_count:
-            st.caption(
-                f"{unranked_count} qualifying companies have no score and are shown "
-                "after score-ranked companies if space remains."
-            )
-    else:
-        ranked = result.sort_values("Ticker").head(10) if "Ticker" in result.columns else result.head(10)
-        st.caption("Because the saved score could not be verified, these rows are shown alphabetically, not score-ranked.")
-
-    displayed_count = len(ranked)
-    st.write(
-        f"Displaying {displayed_count} of {len(shortlist)} qualifying companies "
-        "(up to 10; no rows are duplicated)."
-    )
-    shortlist_columns = [
+    table_columns = [
         column
         for column in [
             "Ticker",
+            "Latest Fiscal Year",
             "STA",
             "SNOA",
             "Altman Z",
             SCORE_COLUMN,
-            "Screening reasons",
+            "Risk Classification",
         ]
-        if column in ranked.columns
+        if column in data.columns
     ]
+    search = st.text_input("Search starting universe by ticker", key="universe_search")
+    universe_view = data.copy()
+    if search.strip() and "Ticker" in universe_view.columns:
+        universe_view = universe_view.loc[
+            universe_view["Ticker"].astype("string").str.contains(
+                search.strip(), case=False, na=False, regex=False
+            )
+        ]
     st.dataframe(
-        ranked[shortlist_columns],
+        universe_view[table_columns] if table_columns else universe_view,
+        height=320,
         hide_index=True,
-        alt="Up to ten companies that passed all screening rules, ranked for further research",
+        alt="Searchable starting universe with saved financial screening metrics",
     )
+
+    st.header("Screening controls")
+    st.caption(
+        "STA and Scaled NOA are ranked across the complete starting universe. "
+        "Missing values have no percentile and cannot trigger that flag."
+    )
+    control_columns = st.columns(3)
+    minimum_flags = control_columns[0].slider(
+        "Red flags required (of 3)",
+        min_value=1,
+        max_value=3,
+        value=2,
+        step=1,
+        key="minimum_flags",
+    )
+    accrual_percentile = control_columns[1].slider(
+        "Accrual percentile at or above",
+        min_value=50,
+        max_value=99,
+        value=75,
+        step=1,
+        key="accrual_percentile",
+    )
+    altman_z_cutoff = control_columns[2].slider(
+        "Altman Z below",
+        min_value=0.0,
+        max_value=4.0,
+        value=2.0,
+        step=0.1,
+        key="altman_z_cutoff",
+    )
+
+    flagged = add_percentile_flags(data, accrual_percentile, altman_z_cutoff)
+    qualifying = qualify_companies(flagged, minimum_flags)
+    funnel_counts = build_funnel_counts(flagged, minimum_flags)
+
+    st.header("Screening funnel")
+    funnel_chart = px.funnel(
+        funnel_counts,
+        x="Companies",
+        y="Screening stage",
+        title="Companies by red-flag threshold",
+        category_orders={
+            "Screening stage": [
+                "Starting universe",
+                "At least 1 red flag",
+                "At least 2 red flags",
+                "3 red flags",
+                f"Qualifying (≥ {minimum_flags})",
+            ]
+        },
+    )
+    funnel_chart.update_traces(textinfo="value")
+    st.plotly_chart(
+        funnel_chart,
+        width="stretch",
+        alt="Starting company count and nested counts with one, two, three, and the selected minimum red flags",
+    )
+
+    st.header("Qualifying short research candidates")
+    st.metric("Companies qualifying", len(qualifying))
+    st.caption(
+        f"Each percentile flag is set at ≥ {accrual_percentile}; the Altman flag is "
+        f"Altman Z < {altman_z_cutoff:.1f}. A company qualifies with at least "
+        f"{minimum_flags} triggered flags. Missing flags are shown as unavailable "
+        "and are not counted as triggered."
+    )
+
+    if qualifying.empty:
+        st.info("No companies meet the selected number of red flags.")
+        st.download_button(
+            "Download qualifying companies",
+            data=qualifying.to_csv(index=False).encode("utf-8"),
+            file_name="short_research_candidates.csv",
+            mime="text/csv",
+            width="stretch",
+        )
+        st.stop()
+
+    ranked = rank_candidates(qualifying)
+    if not score_valid:
+        st.warning("P-Score is not verified. Ranking uses flag count and risk metrics; P-Score is shown only when available.")
+
+    displayed = ranked.head(10).copy()
+    displayed["P-Score"] = pd.to_numeric(
+        displayed.get(SCORE_COLUMN, pd.Series(index=displayed.index, dtype=float)),
+        errors="coerce",
+    )
+    for column in FLAG_COLUMNS:
+        if column in displayed.columns:
+            displayed[column] = displayed[column].map(flag_label)
+    displayed_columns = [
+        "Ticker",
+        "STA",
+        "STA percentile",
+        "SNOA",
+        "SNOA percentile",
+        "Altman Z",
+        "P-Score",
+        *FLAG_COLUMNS,
+        "Total red flags",
+        "Unavailable flags",
+        "Investment conclusion",
+    ]
+    displayed_columns = [column for column in displayed_columns if column in displayed.columns]
+    st.write(f"Showing {len(displayed)} of {len(qualifying)} qualifying companies (maximum 10).")
+    st.dataframe(
+        displayed[displayed_columns],
+        hide_index=True,
+        alt="Ranked short research candidates with metrics, red flags, and conclusions",
+    )
+
+    st.download_button(
+        "Download all qualifying companies as CSV",
+        data=ranked.to_csv(index=False).encode("utf-8"),
+        file_name="short_research_candidates.csv",
+        mime="text/csv",
+        width="stretch",
+    )
+
+    with st.expander("Methodology and limitations"):
+        st.markdown(
+            f"""
+            **Flags:** STA percentile ≥ {accrual_percentile}; Scaled NOA percentile ≥
+            {accrual_percentile}; and Altman Z-Score < {altman_z_cutoff:.1f}. Percentile
+            ranks use average ranks across the full starting universe, with missing
+            values excluded from the rank calculation. Missing flags are marked
+            unavailable, not silently marked as no flag.
+
+            **Ranking:** qualifying companies are ordered by triggered flag count
+            (most first), then P-Score (lowest first as a confirmation signal),
+            higher STA percentile, higher Scaled NOA percentile, and lower Altman Z.
+            The P-Score is not an additional red flag.
+
+            **P-Score:** the source code calculates nine binary signals:
+            four profitability signals (positive ROA, positive operating cash flow
+            relative to beginning assets, improving ROA, and operating cash flow
+            greater than net income); three funding signals (declining long-term
+            debt-to-assets, improving current ratio, and no positive common-share
+            issuance); and two efficiency signals (improving gross margin and asset
+            turnover). The total is Profitability (0–4) + Funding (0–3) +
+            Efficiency (0–2), maximum 9. It is a Piotroski-style F-Score; scores
+            with missing required inputs remain unavailable.
+
+            **Metric formulas:** STA = (Net Income − Operating Cash Flow) / Total
+            Assets. Scaled NOA = (Total Debt + Equity − Cash) / Prior-Year Total
+            Assets. Altman Z = 1.2 × WC/TA + 1.4 × RE/TA + 3.3 × EBIT/TA + 0.6 ×
+            MVE/TL + 1.0 × Sales/TA.
+
+            These results are a research screen, not a validated strategy or
+            investment recommendation. Altman Z was not designed for consistent
+            interpretation across all sectors; banks and other financial companies
+            can have balance-sheet structures that make its ratios inappropriate.
+            Verify source statements and use sector-specific analysis before drawing
+            conclusions.
+            """
+        )
+
 
 if __name__ == "__main__":
     main()
