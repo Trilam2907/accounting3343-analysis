@@ -186,24 +186,24 @@ def build_funnel_counts(data: pd.DataFrame, minimum_flags: int) -> pd.DataFrame:
 
 
 def rank_candidates(data: pd.DataFrame) -> pd.DataFrame:
-    """Prioritize more flags, then weaker P-Score; use financial flags to break ties."""
+    """Sort by flags, STA percentile, SNOA percentile, P-Score, then Altman Z."""
     result = data.copy()
-    if SCORE_COLUMN not in result.columns:
-        result[SCORE_COLUMN] = float("nan")
-    result[SCORE_COLUMN] = pd.to_numeric(result[SCORE_COLUMN], errors="coerce")
     ordering = [
         "Total red flags",
-        SCORE_COLUMN,
         "STA percentile",
         "SNOA percentile",
+        SCORE_COLUMN,
         "Altman Z",
     ]
-    ascending = [False, True, False, False, True]
-    existing = [column for column in ordering if column in result.columns]
-    directions = [ascending[ordering.index(column)] for column in existing]
+    ascending = [False, False, False, True, True]
+    for column in ordering:
+        if column not in result.columns:
+            result[column] = float("nan")
+        result[column] = pd.to_numeric(result[column], errors="coerce")
+
     return result.sort_values(
-        existing,
-        ascending=directions,
+        ordering,
+        ascending=ascending,
         na_position="last",
         kind="stable",
     )
@@ -461,8 +461,9 @@ def main() -> None:
             unavailable, not silently marked as no flag.
 
             **Ranking:** qualifying companies are ordered by triggered flag count
-            (most first), then P-Score (lowest first as a confirmation signal),
-            higher STA percentile, higher Scaled NOA percentile, and lower Altman Z.
+            (most first), higher STA percentile, higher Scaled NOA percentile,
+            lower P-Score as a confirmation signal, then lower Altman Z. Missing
+            values sort after available values at their tie-breaker stage.
             The P-Score is not an additional red flag.
 
             **P-Score:** the source code calculates nine binary signals:

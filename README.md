@@ -36,7 +36,7 @@ The saved `Financial Strength Score (0-9)` is the project's Piotroski-style nine
 - **Funding (0–3):** lower long-term debt-to-assets than the prior period; higher current ratio; and no positive common-share issuance.
 - **Efficiency (0–2):** improved gross margin and improved asset turnover.
 
-The total is `Profitability + Funding + Efficiency`, with a maximum of 9. Funding already combines the leverage, liquidity, and issuance signals. A group score and total P-Score are missing when one of their required inputs is missing. The app checks that the saved total equals these three component scores. P-Score is not a fourth red flag; candidates are ranked by red-flag count descending, P-Score ascending as a confirmation measure, then STA percentile descending, Scaled NOA percentile descending, and Altman Z ascending. Missing P-Scores sort after available scores. No duplicate rows are added when fewer than 10 candidates qualify.
+The total is `Profitability + Funding + Efficiency`, with a maximum of 9. Funding already combines the leverage, liquidity, and issuance signals. A group score and total P-Score are missing when one of their required inputs is missing. The app checks that the saved total equals these three component scores. P-Score is not a fourth red flag. Candidates are ranked by triggered red-flag count descending, STA percentile descending, Scaled NOA percentile descending, P-Score ascending (lower scores rank higher as a confirmation signal), then Altman Z ascending. At each tie-breaker, missing values sort below available values; they are never treated as zero. No duplicate rows are added when fewer than 10 candidates qualify.
 
 ## Exclusions and limitations
 
