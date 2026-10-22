@@ -209,6 +209,38 @@ def rank_candidates(data: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def format_candidate_table(data: pd.DataFrame) -> pd.DataFrame:
+    """Format the existing shortlist columns without changing the score data."""
+    displayed = data.copy()
+    score_values = pd.to_numeric(
+        displayed.get(SCORE_COLUMN, pd.Series(index=displayed.index, dtype=float)),
+        errors="coerce",
+    )
+    displayed["P-Score"] = score_values.map(
+        lambda value: "Unknown" if pd.isna(value) else f"{value:g}"
+    )
+    for column in FLAG_COLUMNS:
+        if column in displayed.columns:
+            displayed[column] = displayed[column].map(flag_label)
+
+    displayed_columns = [
+        "Ticker",
+        "STA",
+        "STA percentile",
+        "SNOA",
+        "SNOA percentile",
+        "Altman Z",
+        "P-Score",
+        *FLAG_COLUMNS,
+        "Total red flags",
+        "Unavailable flags",
+        "Investment conclusion",
+    ]
+    return displayed[
+        [column for column in displayed_columns if column in displayed.columns]
+    ]
+
+
 def flag_label(value: object) -> str:
     if pd.isna(value):
         return "Unavailable"
@@ -359,6 +391,18 @@ def main() -> None:
             step=0.1,
             key="altman_z_cutoff",
         )
+        maximum_p_score = st.slider(
+            "Maximum Financial Strength Score (P-Score)",
+            min_value=1,
+            max_value=9,
+            value=9,
+            step=1,
+            key="maximum_p_score",
+            help=(
+                "Lower scores indicate weaker financial strength and may help "
+                "identify companies for further short-selling research."
+            ),
+        )
 
     flagged = add_percentile_flags(data, accrual_percentile, altman_z_cutoff)
     qualifying = qualify_companies(flagged, minimum_flags)
@@ -388,68 +432,73 @@ def main() -> None:
     )
 
     st.header("Qualifying short research candidates")
-    st.metric("Companies qualifying", len(qualifying))
+    p_score_values = pd.to_numeric(
+        qualifying.get(SCORE_COLUMN, pd.Series(index=qualifying.index, dtype=float)),
+        errors="coerce",
+    )
+    unknown_score_candidates = qualifying.loc[p_score_values.isna()].copy()
+    score_filtered_candidates = qualifying.loc[
+        p_score_values.notna() & p_score_values.le(maximum_p_score)
+    ].copy()
+
+    st.metric("Companies qualifying by red flags", len(qualifying))
+    st.metric("Companies within P-Score limit", len(score_filtered_candidates))
     st.caption(
         f"Each percentile flag is set at ≥ {accrual_percentile}; the Altman flag is "
         f"Altman Z < {altman_z_cutoff:.1f}. A company qualifies with at least "
         f"{minimum_flags} triggered flags. Missing flags are shown as unavailable "
-        "and are not counted as triggered."
+        "and are not counted as triggered. P-Score is a confirmation filter, not "
+        "an additional red flag."
     )
 
-    if qualifying.empty:
-        st.info("No companies meet the selected number of red flags.")
+    if not unknown_score_candidates.empty:
+        st.caption(
+            f"{len(unknown_score_candidates)} red-flag-qualified companies have an "
+            "Unknown P-Score and are kept separate from the score-filtered results."
+        )
+
+    if score_filtered_candidates.empty:
+        st.info("No companies meet the red-flag rules and selected P-Score limit.")
         st.download_button(
-            "Download qualifying companies",
-            data=qualifying.to_csv(index=False).encode("utf-8"),
+            "Download P-Score-filtered companies",
+            data=score_filtered_candidates.to_csv(index=False).encode("utf-8"),
             file_name="short_research_candidates.csv",
             mime="text/csv",
             width="stretch",
         )
-        st.stop()
+    else:
+        ranked = rank_candidates(score_filtered_candidates)
+        if not score_valid:
+            st.warning("P-Score is not verified. Ranking uses red-flag count and risk metrics; P-Score is shown only when available.")
 
-    ranked = rank_candidates(qualifying)
-    if not score_valid:
-        st.warning("P-Score is not verified. Ranking uses flag count and risk metrics; P-Score is shown only when available.")
+        displayed = ranked.head(10)
+        st.write(
+            f"Showing {len(displayed)} of {len(ranked)} P-Score-filtered candidates "
+            "(maximum 10)."
+        )
+        st.dataframe(
+            format_candidate_table(displayed),
+            hide_index=True,
+            alt="Ranked short research candidates with metrics, red flags, and conclusions",
+        )
 
-    displayed = ranked.head(10).copy()
-    score_values = pd.to_numeric(
-        displayed.get(SCORE_COLUMN, pd.Series(index=displayed.index, dtype=float)),
-        errors="coerce",
-    )
-    displayed["P-Score"] = score_values.map(
-        lambda value: "Unknown" if pd.isna(value) else f"{value:g}"
-    )
-    for column in FLAG_COLUMNS:
-        if column in displayed.columns:
-            displayed[column] = displayed[column].map(flag_label)
-    displayed_columns = [
-        "Ticker",
-        "STA",
-        "STA percentile",
-        "SNOA",
-        "SNOA percentile",
-        "Altman Z",
-        "P-Score",
-        *FLAG_COLUMNS,
-        "Total red flags",
-        "Unavailable flags",
-        "Investment conclusion",
-    ]
-    displayed_columns = [column for column in displayed_columns if column in displayed.columns]
-    st.write(f"Showing {len(displayed)} of {len(qualifying)} qualifying companies (maximum 10).")
-    st.dataframe(
-        displayed[displayed_columns],
-        hide_index=True,
-        alt="Ranked short research candidates with metrics, red flags, and conclusions",
-    )
+        st.download_button(
+            "Download all P-Score-filtered companies as CSV",
+            data=ranked.to_csv(index=False).encode("utf-8"),
+            file_name="short_research_candidates.csv",
+            mime="text/csv",
+            width="stretch",
+        )
 
-    st.download_button(
-        "Download all qualifying companies as CSV",
-        data=ranked.to_csv(index=False).encode("utf-8"),
-        file_name="short_research_candidates.csv",
-        mime="text/csv",
-        width="stretch",
-    )
+    if not unknown_score_candidates.empty:
+        with st.expander(
+            f"Companies with Unknown P-Score ({len(unknown_score_candidates)})"
+        ):
+            st.dataframe(
+                format_candidate_table(rank_candidates(unknown_score_candidates)),
+                hide_index=True,
+                alt="Red-flag-qualified companies excluded from P-Score filtering because their score is unknown",
+            )
 
     with st.expander("Methodology and limitations"):
         st.markdown(
