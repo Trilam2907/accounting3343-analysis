@@ -224,6 +224,10 @@ def main() -> None:
         "This screen highlights companies for additional research. It does not "
         "identify guaranteed profitable short positions or provide investment advice."
     )
+    st.info(
+        "**Unknown** means the required financial data was unavailable—not that "
+        "the company performed poorly."
+    )
 
     path = source_csv_path()
     try:
@@ -298,6 +302,17 @@ def main() -> None:
                 search.strip(), case=False, na=False, regex=False
             )
         ]
+    if "Risk Classification" in universe_view.columns:
+        universe_view["Risk Classification"] = universe_view[
+            "Risk Classification"
+        ].replace("Insufficient Data", "Unknown")
+    if SCORE_COLUMN in universe_view.columns:
+        universe_scores = pd.to_numeric(
+            universe_view[SCORE_COLUMN], errors="coerce"
+        )
+        universe_view[SCORE_COLUMN] = universe_scores.map(
+            lambda value: "Unknown" if pd.isna(value) else f"{value:g}"
+        )
     st.dataframe(
         universe_view[table_columns] if table_columns else universe_view,
         height=320,
@@ -388,9 +403,12 @@ def main() -> None:
         st.warning("P-Score is not verified. Ranking uses flag count and risk metrics; P-Score is shown only when available.")
 
     displayed = ranked.head(10).copy()
-    displayed["P-Score"] = pd.to_numeric(
+    score_values = pd.to_numeric(
         displayed.get(SCORE_COLUMN, pd.Series(index=displayed.index, dtype=float)),
         errors="coerce",
+    )
+    displayed["P-Score"] = score_values.map(
+        lambda value: "Unknown" if pd.isna(value) else f"{value:g}"
     )
     for column in FLAG_COLUMNS:
         if column in displayed.columns:
