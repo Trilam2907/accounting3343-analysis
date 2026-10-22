@@ -305,36 +305,36 @@ def main() -> None:
         alt="Searchable starting universe with saved financial screening metrics",
     )
 
-    st.header("Screening controls")
-    st.caption(
-        "STA and Scaled NOA are ranked across the complete starting universe. "
-        "Missing values have no percentile and cannot trigger that flag."
-    )
-    control_columns = st.columns(3)
-    minimum_flags = control_columns[0].slider(
-        "Red flags required (of 3)",
-        min_value=1,
-        max_value=3,
-        value=2,
-        step=1,
-        key="minimum_flags",
-    )
-    accrual_percentile = control_columns[1].slider(
-        "Accrual percentile at or above",
-        min_value=50,
-        max_value=99,
-        value=75,
-        step=1,
-        key="accrual_percentile",
-    )
-    altman_z_cutoff = control_columns[2].slider(
-        "Altman Z below",
-        min_value=0.0,
-        max_value=4.0,
-        value=2.0,
-        step=0.1,
-        key="altman_z_cutoff",
-    )
+    with st.sidebar:
+        st.header("Screening controls")
+        st.caption(
+            "STA and Scaled NOA are ranked across the complete starting universe. "
+            "Missing values have no percentile and cannot trigger that flag."
+        )
+        minimum_flags = st.slider(
+            "Red flags required (of 3)",
+            min_value=1,
+            max_value=3,
+            value=2,
+            step=1,
+            key="minimum_flags",
+        )
+        accrual_percentile = st.slider(
+            "Accrual percentile at or above",
+            min_value=50,
+            max_value=99,
+            value=75,
+            step=1,
+            key="accrual_percentile",
+        )
+        altman_z_cutoff = st.slider(
+            "Altman Z below",
+            min_value=0.0,
+            max_value=4.0,
+            value=2.0,
+            step=0.1,
+            key="altman_z_cutoff",
+        )
 
     flagged = add_percentile_flags(data, accrual_percentile, altman_z_cutoff)
     qualifying = qualify_companies(flagged, minimum_flags)
