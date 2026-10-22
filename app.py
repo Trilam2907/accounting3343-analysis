@@ -40,21 +40,6 @@ CONCLUSION_BY_FLAGS = {
     1: "Watchlist — limited warning signals",
     0: "Not flagged by this screen",
 }
-INDUSTRY_OPTIONS = [
-    "All industries",
-    "Financial Services",
-    "Energy",
-    "Technology",
-    "Other",
-]
-SECTOR_COLUMN_NAMES = {
-    "sector",
-    "gics sector",
-    "industry",
-    "gics industry",
-}
-
-
 @st.cache_data
 def load_data(path: str) -> pd.DataFrame:
     """Read the saved CSV only; no stock-data requests are made by the dashboard."""
@@ -64,61 +49,6 @@ def load_data(path: str) -> pd.DataFrame:
 def source_csv_path() -> Path:
     """Prefer the full universe file and fall back to the generated results CSV."""
     return UNIVERSE_PATH if UNIVERSE_PATH.is_file() else SCREENING_PATH
-
-
-def find_sector_column(data: pd.DataFrame) -> str | None:
-    """Find an existing sector/industry field without inferring from company names."""
-    for column in data.columns:
-        if str(column).strip().casefold() in SECTOR_COLUMN_NAMES:
-            return column
-    return None
-
-
-def classify_sector(value: object) -> str | None:
-    """Map a provided sector label into one of the dashboard's four groups."""
-    if pd.isna(value) or not str(value).strip():
-        return None
-
-    sector = str(value).strip().casefold()
-    if any(
-        term in sector
-        for term in (
-            "financial",
-            "bank",
-            "insurance",
-            "capital market",
-            "asset management",
-            "consumer finance",
-            "mortgage",
-        )
-    ):
-        return "Financial Services"
-    if any(
-        term in sector
-        for term in (
-            "energy",
-            "oil",
-            "gas",
-            "petroleum",
-            "coal",
-            "drilling",
-            "energy equipment",
-        )
-    ):
-        return "Energy"
-    if any(
-        term in sector
-        for term in (
-            "technology",
-            "software",
-            "semiconductor",
-            "information technology",
-            "computer",
-            "electronic",
-        )
-    ):
-        return "Technology"
-    return "Other"
 
 
 def calculate_metrics_from_raw_inputs(data: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
@@ -317,45 +247,6 @@ def main() -> None:
     data, formulas_recalculated = calculate_metrics_from_raw_inputs(raw_data)
     score_valid, score_message = validate_p_score(data)
 
-    sector_column = find_sector_column(data)
-    industry_selection = st.selectbox(
-        "Industry",
-        INDUSTRY_OPTIONS,
-        index=0,
-        key=(
-            "industry_selection_with_sector"
-            if sector_column is not None
-            else "industry_selection_without_sector"
-        ),
-        disabled=sector_column is None,
-    )
-
-    if sector_column is None:
-        selected_data = data
-        st.warning(
-            "This dataset has no sector or industry column. Industry-specific "
-            "filters require sector data. All industries are shown."
-        )
-    else:
-        industry_categories = data[sector_column].map(classify_sector)
-        classified_count = int(industry_categories.notna().sum())
-        unknown_count = len(data) - classified_count
-        st.caption(
-            f"Industry groups use `{sector_column}` from the saved data. "
-            f"{classified_count} companies have a sector value; "
-            f"{unknown_count} have no sector value and remain unclassified."
-        )
-        if industry_selection == "All industries":
-            selected_data = data
-        else:
-            selected_data = data.loc[industry_categories.eq(industry_selection)]
-            if unknown_count:
-                st.info(
-                    f"{unknown_count} companies with missing sector data are not "
-                    "included in this industry selection."
-                )
-        st.metric("Companies in selected industry", len(selected_data))
-
     st.header("Starting universe")
     company_count = (
         data["Ticker"].dropna().nunique() if "Ticker" in data.columns else len(data)
@@ -413,7 +304,7 @@ def main() -> None:
         if column in data.columns
     ]
     search = st.text_input("Search starting universe by ticker", key="universe_search")
-    universe_view = selected_data.copy()
+    universe_view = data.copy()
     if search.strip() and "Ticker" in universe_view.columns:
         universe_view = universe_view.loc[
             universe_view["Ticker"].astype("string").str.contains(
@@ -470,9 +361,8 @@ def main() -> None:
         )
 
     flagged = add_percentile_flags(data, accrual_percentile, altman_z_cutoff)
-    selected_flagged = flagged.loc[selected_data.index]
-    qualifying = qualify_companies(selected_flagged, minimum_flags)
-    funnel_counts = build_funnel_counts(selected_flagged, minimum_flags)
+    qualifying = qualify_companies(flagged, minimum_flags)
+    funnel_counts = build_funnel_counts(flagged, minimum_flags)
 
     st.header("Screening funnel")
     funnel_chart = px.funnel(
