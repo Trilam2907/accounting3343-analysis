@@ -218,19 +218,19 @@ if section == "Overview":
     )
     chart_columns = st.columns(2)
     with chart_columns[0]:
-        st.caption("Companies in the universe")
+        st.caption("Universe")
         st.bar_chart(
             distribution[["Universe"]],
             horizontal=True,
-            height=500,
+            height=280,
             color="#4C78A8",
         )
     with chart_columns[1]:
-        st.caption("Passing the active screen")
+        st.caption("Passing screen")
         st.bar_chart(
             distribution[["Passing active screen"]],
             horizontal=True,
-            height=500,
+            height=280,
             color="#59A14F",
         )
     show_table(distribution.reset_index())
