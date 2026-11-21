@@ -16,6 +16,8 @@ Each company record carries its reporting currency, calculation timestamp, formu
 version, and a missing restatement flag because the data provider does not expose a
 reliable one. The historical dataset contains up to three fiscal-year observations for
 each company with available statement data.
+Sector filters and peer rankings use the 11 broad GICS sectors from the S&P 500
+constituent list, rather than Yahoo Finance's inconsistent sector/category labels.
 
 The app has three sections: an overview with universe and active-screen summaries, a
 stock screener with filters and historical trends, and methodology with formulas,
