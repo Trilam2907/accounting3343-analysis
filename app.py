@@ -183,12 +183,6 @@ for metric in selected_metrics:
         & screen[metric].between(selected_range[0], selected_range[1])
     ]
 
-st.sidebar.divider()
-normalization = st.sidebar.selectbox(
-    "Comparison columns",
-    ["None", "Percentile rank (0–100)", "Z-score"],
-)
-
 section = st.radio(
     "Section",
     ["Overview", "Stock Screener", "Methodology"],
@@ -222,7 +216,23 @@ if section == "Overview":
         )
         .sort_values("Universe", ascending=False)
     )
-    st.bar_chart(distribution[["Universe", "Passing active screen"]])
+    chart_columns = st.columns(2)
+    with chart_columns[0]:
+        st.caption("Companies in the universe")
+        st.bar_chart(
+            distribution[["Universe"]],
+            horizontal=True,
+            height=500,
+            color="#4C78A8",
+        )
+    with chart_columns[1]:
+        st.caption("Passing the active screen")
+        st.bar_chart(
+            distribution[["Passing active screen"]],
+            horizontal=True,
+            height=500,
+            color="#59A14F",
+        )
     show_table(distribution.reset_index())
 
     st.subheader("Companies passing the active screen")
@@ -238,6 +248,10 @@ if section == "Overview":
 elif section == "Stock Screener":
     st.header("Stock Screener")
     st.caption(f"{len(screen):,} of {len(metrics):,} companies pass the active filters.")
+    normalization = st.sidebar.selectbox(
+        "Comparison columns",
+        ["None", "Percentile rank (0–100)", "Z-score"],
+    )
 
     result = screen[IDENTIFIER_COLUMNS + METRIC_COLUMNS].copy()
     if normalization == "Percentile rank (0–100)":
