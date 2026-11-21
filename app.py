@@ -260,6 +260,11 @@ sectors = sorted(metrics["Sector"].dropna().astype(str).unique())
 st.sidebar.header("Active screen")
 include_download_issues = st.sidebar.checkbox("Include incomplete download rows", value=False)
 selected_sectors = st.sidebar.multiselect("Sectors", sectors, default=sectors)
+visible_ranking_columns = [
+    column
+    for column in RANKING_COLUMNS
+    if column != "Sector Rank" or len(selected_sectors) == 1
+]
 search = st.sidebar.text_input("Company or ticker contains")
 selected_metrics = st.sidebar.multiselect(
     "Filter by financial metrics",
@@ -331,7 +336,7 @@ if section == "Overview":
     )
     st.subheader("Companies passing the active screen")
     show_table(
-        screen[IDENTIFIER_COLUMNS + RANKING_COLUMNS + METRIC_COLUMNS].sort_values(
+        screen[IDENTIFIER_COLUMNS + visible_ranking_columns + METRIC_COLUMNS].sort_values(
             "Overall Rank", na_position="last"
         )
     )
@@ -419,7 +424,9 @@ elif section == "Stock Screener":
         ["None", "Percentile rank (0–100)", "Z-score"],
     )
 
-    result = screen[IDENTIFIER_COLUMNS + RANKING_COLUMNS + METRIC_COLUMNS].copy()
+    result = screen[
+        IDENTIFIER_COLUMNS + visible_ranking_columns + METRIC_COLUMNS
+    ].copy()
     if normalization == "Percentile rank (0–100)":
         for metric in selected_metrics or METRIC_COLUMNS:
             result[f"{metric} Percentile"] = metrics[metric].rank(pct=True) * 100
