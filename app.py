@@ -5,6 +5,7 @@ import streamlit as st
 
 
 DATA_FILE = Path(__file__).parent / "sp500_all_company_metrics.csv"
+HISTORY_FILE = Path(__file__).parent / "sp500_three_year_historical_metrics.csv"
 IDENTIFIER_COLUMNS = ["Company", "Ticker", "Sector", "Industry"]
 STATUS_COLUMN = "Download Status"
 METRIC_COLUMNS = [
@@ -26,6 +27,50 @@ METRIC_COLUMNS = [
     "STA (%)",
     "SNOA (%)",
 ]
+HISTORY_METRICS = [
+    "Revenue",
+    "Net Income",
+    "EPS",
+    "Free Cash Flow",
+    "Gross Margin (%)",
+    "Operating Margin (%)",
+    "EBITDA Margin (%)",
+    "Net Profit Margin (%)",
+    "ROA (%)",
+    "ROE (%)",
+    "Asset Turnover",
+    "Debt/Equity",
+    "Current Ratio",
+    "EPS Growth (%)",
+    "FCF Growth (%)",
+    "STA (%)",
+    "SNOA (%)",
+]
+
+
+@st.cache_data
+def load_history() -> pd.DataFrame:
+    if not HISTORY_FILE.is_file():
+        raise FileNotFoundError(f"Historical dataset not found: {HISTORY_FILE.name}")
+
+    data = pd.read_csv(HISTORY_FILE)
+    required_columns = {
+        "Company",
+        "Ticker",
+        "Sector",
+        "Fiscal Year",
+        *HISTORY_METRICS,
+    }
+    missing_columns = required_columns.difference(data.columns)
+    if missing_columns:
+        raise ValueError(
+            f"Historical dataset is missing columns: {', '.join(sorted(missing_columns))}"
+        )
+
+    data["Fiscal Year"] = pd.to_numeric(data["Fiscal Year"], errors="coerce")
+    for column in HISTORY_METRICS:
+        data[column] = pd.to_numeric(data[column], errors="coerce")
+    return data.dropna(subset=["Fiscal Year"])
 
 
 st.set_page_config(page_title="S&P 500 Stock Screener", page_icon="📊", layout="wide")
@@ -150,4 +195,84 @@ st.download_button(
 st.caption(
     "Financial metrics are calculated from annual company statements and Yahoo Finance data. "
     "Some values may be missing or distorted by unusual accounting items; verify data before use."
+)
+
+st.divider()
+st.header("Three-year historical trends")
+st.caption(
+    "Historical rows show up to three available annual observations per company. "
+    "Coverage varies, and historical P/E and shareholder-yield metrics are not available."
+)
+try:
+    history = load_history()
+except (FileNotFoundError, ValueError, pd.errors.ParserError) as error:
+    st.error(f"Could not load historical metrics: {error}")
+    st.stop()
+
+history_tickers = sorted(history["Ticker"].dropna().astype(str).unique())
+if not history_tickers:
+    st.info("No historical statement data is available.")
+    st.stop()
+
+companies = history.drop_duplicates("Ticker").set_index("Ticker")["Company"].fillna("")
+history_controls = st.columns(3)
+selected_ticker = history_controls[0].selectbox(
+    "Company",
+    history_tickers,
+    format_func=lambda ticker: f"{ticker} — {companies.get(ticker, ticker)}",
+)
+selected_history_metric = history_controls[1].selectbox(
+    "Historical metric",
+    HISTORY_METRICS,
+    index=HISTORY_METRICS.index("Revenue"),
+)
+history_sectors = sorted(history["Sector"].dropna().astype(str).unique())
+selected_comparison_sector = history_controls[2].selectbox(
+    "Compare sector",
+    ["No sector comparison", *history_sectors],
+)
+
+company_history = history[history["Ticker"].astype(str).eq(selected_ticker)].sort_values(
+    "Fiscal Year"
+)
+chart_history = company_history.dropna(subset=[selected_history_metric])
+if chart_history.empty:
+    st.info(f"No {selected_history_metric} observations are available for this company.")
+else:
+    st.line_chart(
+        chart_history.set_index("Fiscal Year")[[selected_history_metric]],
+        x_label="Fiscal year",
+        y_label=selected_history_metric,
+    )
+    st.dataframe(
+        chart_history[["Fiscal Year", selected_history_metric]].reset_index(drop=True),
+        hide_index=True,
+        width="stretch",
+    )
+
+if selected_comparison_sector != "No sector comparison":
+    latest_company_year = company_history["Fiscal Year"].max()
+    sector_comparison = history[
+        history["Sector"].eq(selected_comparison_sector)
+        & history["Fiscal Year"].eq(latest_company_year)
+    ][["Company", "Ticker", selected_history_metric]].dropna(
+        subset=[selected_history_metric]
+    )
+    st.subheader(
+        f"{selected_comparison_sector} — fiscal year {int(latest_company_year)}"
+    )
+    st.caption("Sorted by value, not by whether the metric is favorable.")
+    st.dataframe(
+        sector_comparison.sort_values(
+            selected_history_metric, ascending=False, kind="stable"
+        ).reset_index(drop=True),
+        hide_index=True,
+        width="stretch",
+    )
+
+st.download_button(
+    "Download three-year history as CSV",
+    data=history.to_csv(index=False).encode("utf-8"),
+    file_name="sp500_three_year_historical_metrics.csv",
+    mime="text/csv",
 )

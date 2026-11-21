@@ -9,9 +9,11 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
-The app reads `sp500_all_company_metrics.csv` from the repository. This bundled dataset
-is a snapshot generated on November 20, 2026; it is not refreshed automatically. The
-notebook `Untitled8.ipynb` contains the data collection and metric calculation workflow.
+The app reads `sp500_all_company_metrics.csv` and
+`sp500_three_year_historical_metrics.csv` from the repository. These bundled datasets
+are snapshots generated on November 20, 2026; they are not refreshed automatically.
+The historical dataset contains up to three fiscal-year observations for each company
+with available statement data.
 
 ## Deploy to Streamlit Community Cloud
 
@@ -20,4 +22,5 @@ this repository, the desired branch, and `app.py` as the main file. The `require
 file supplies the app dependencies.
 
 The metrics are provided for educational screening only, are not live market data, and
-should not be treated as investment advice.
+should not be treated as investment advice. The three-year history does not include
+historical P/E, market capitalization, buyback yields, or net issuance yields.
