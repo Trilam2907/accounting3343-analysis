@@ -12,8 +12,17 @@ streamlit run app.py
 The app reads `sp500_all_company_metrics.csv` and
 `sp500_three_year_historical_metrics.csv` from the repository. These bundled datasets
 are snapshots generated on November 20, 2026; they are not refreshed automatically.
-The historical dataset contains up to three fiscal-year observations for each company
-with available statement data.
+Each company record carries its reporting currency, calculation timestamp, formula
+version, and a missing restatement flag because the data provider does not expose a
+reliable one. The historical dataset contains up to three fiscal-year observations for
+each company with available statement data.
+
+The app has three sections: an overview with universe and active-screen summaries, a
+stock screener with filters and historical trends, and methodology with formulas,
+calculation policy, and data-quality coverage. TTM metrics are not calculated because
+the bundled source contains annual—not quarterly—statements. The supplied metric list
+included only a subset of the referenced 97 definitions; unprovided definitions are
+not inferred or presented as implemented.
 
 ## Deploy to Streamlit Community Cloud
 
