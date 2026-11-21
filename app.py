@@ -31,6 +31,10 @@ METRIC_COLUMNS = [
     "SNOA (%)",
 ]
 RANKING_GROUPS = {
+    "Safety": [
+        ("STA (%)", False),
+        ("SNOA (%)", False),
+    ],
     "Quality": [
         ("Gross Profitability", True),
         ("Gross Margin (%)", True),
@@ -38,6 +42,8 @@ RANKING_GROUPS = {
         ("EBITDA Margin (%)", True),
         ("Net Profit Margin (%)", True),
         ("Return on Assets (%)", True),
+        ("Return on Equity (%)", True),
+        ("Asset Turnover", True),
         ("Operating Cash Flow / Assets (%)", True),
     ],
     "Growth": [
@@ -50,6 +56,14 @@ RANKING_GROUPS = {
         ("Current Ratio", "sector_median"),
     ],
     "Capital Allocation": [("Buyback Yield (%)", True)],
+}
+RANKING_WEIGHTS = {
+    "Safety": 0.25,
+    "Quality": 0.20,
+    "Growth": 0.15,
+    "Value": 0.15,
+    "Financial Strength": 0.15,
+    "Capital Allocation": 0.10,
 }
 RANKING_COLUMNS = [
     "Overall Rank",
@@ -86,7 +100,7 @@ HISTORY_METRICS = [
 MONETARY_COLUMNS = {"Revenue", "Net Income", "Free Cash Flow"}
 FORMULA_VERSION = "1.1.0"
 SNAPSHOT_LABEL = "November 20, 2026"
-DATA_VERSION = "broad-sectors-no-industry-2026-11-21"
+DATA_VERSION = "broad-sectors-safety-first-2026-11-21"
 
 
 st.set_page_config(page_title="S&P 500 Stock Screener", page_icon="📊", layout="wide")
@@ -169,8 +183,22 @@ def add_rankings(data: pd.DataFrame) -> pd.DataFrame:
         ).mean(axis=1)
 
     ranked = pd.concat([ranked, group_scores], axis=1)
-    ranked["Composite Score"] = group_scores.mean(axis=1)
-    eligible = usable & group_scores.notna().sum(axis=1).ge(3)
+    score_weights = pd.Series(
+        {
+            f"{group_name} Score": weight
+            for group_name, weight in RANKING_WEIGHTS.items()
+        }
+    ).reindex(group_scores.columns)
+    available_weights = group_scores.notna().mul(score_weights)
+    weighted_scores = group_scores.mul(score_weights, axis=1)
+    ranked["Composite Score"] = (
+        weighted_scores.sum(axis=1) / available_weights.sum(axis=1)
+    ).where(group_scores.notna().any(axis=1))
+    eligible = (
+        usable
+        & group_scores["Safety Score"].notna()
+        & group_scores.notna().sum(axis=1).ge(3)
+    )
     ranked["Overall Rank"] = np.nan
     ranked["Sector Rank"] = np.nan
     ranked.loc[eligible, "Overall Rank"] = (
@@ -321,10 +349,11 @@ if section == "Overview":
     metric_columns[3].metric("Incomplete downloads", f"{int((~successful).sum()):,}")
 
     st.info(
-        "Ranking converts metrics to sector-relative percentiles, averages them within "
-        "five equally weighted groups—Quality, Growth, Value, Financial Strength, and "
-        "Capital Allocation—then averages available group scores. A company needs at "
-        "least 3 group scores; missing values are not imputed."
+        "Ranking converts metrics to sector-relative percentiles, then combines six "
+        "groups with Safety weighted highest (25%), followed by Quality (20%), Growth "
+        "(15%), Value (15%), Financial Strength (15%), and Capital Allocation (10%). "
+        "A company needs a Safety score and at least three total group scores; missing "
+        "values are not imputed."
     )
     st.subheader("Companies passing the active screen")
     overview_columns = [
@@ -451,13 +480,12 @@ elif section == "Stock Screener":
     st.header("Stock Screener")
     st.caption(f"{len(screen):,} of {len(metrics):,} companies pass the active filters.")
     st.info(
-        "Scores are sector-relative 0–100 percentiles, averaged within five equally "
-        "weighted groups: Quality, Growth, Value, Financial Strength, and Capital "
-        "Allocation. At least 3 groups are required for an overall rank; missing values "
-        "are not imputed. Higher is better except P/E and Debt/Equity, which are "
-        "reverse-ranked; Current Ratio scores by closeness to its sector median. "
-        "Buyback Yield represents capital allocation; its inverse, Net Equity Issuance, "
-        "is excluded to avoid double-counting."
+        "Scores are sector-relative 0–100 percentiles. Safety is weighted 25%, Quality "
+        "20%, Growth 15%, Value 15%, Financial Strength 15%, and Capital Allocation "
+        "10%; available weights are renormalized when a group is missing. Lower STA and "
+        "SNOA are better. A company needs a Safety score and at least three total group "
+        "scores. Higher is better except P/E and Debt/Equity, which are reverse-ranked; "
+        "Current Ratio scores by closeness to its sector median."
     )
     normalization = st.sidebar.selectbox(
         "Comparison columns",
@@ -605,11 +633,14 @@ else:
     st.subheader("Ranking")
     st.markdown(
         "Each metric is converted to a sector-relative percentile. Metric percentiles "
-        "are averaged within **Quality**, **Growth**, **Value**, **Financial Strength**, "
-        "and **Capital Allocation**, then the five group scores are averaged equally. "
-        "At least three available group scores are required to rank a company. Missing "
-        "values are excluded, not imputed; Net Equity Issuance is omitted from the score "
-        "because it is the inverse of Buyback Yield."
+        "are averaged within **Safety**, **Quality**, **Growth**, **Value**, "
+        "**Financial Strength**, and **Capital Allocation**. STA and SNOA are "
+        "reverse-ranked inside Safety because low or negative values indicate better "
+        "earnings quality and operating efficiency. Group weights are Safety 25%, "
+        "Quality 20%, Growth 15%, Value 15%, Financial Strength 15%, and Capital "
+        "Allocation 10%. Available weights are renormalized for missing groups. A "
+        "company needs a Safety score and at least three total group scores. Missing "
+        "values are excluded, not imputed."
     )
 
     st.subheader("Calculation policy")

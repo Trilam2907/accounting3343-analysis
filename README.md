@@ -25,10 +25,14 @@ calculation policy, and data-quality coverage. The supplied metric list included
 a subset of the referenced 97 definitions; unprovided definitions are not inferred or
 presented as implemented.
 
-Company rankings use sector-relative metric percentiles averaged into five equally
-weighted groups. At least three available group scores are required; missing metrics
-are not imputed. Current Ratio is scored by closeness to its sector median, and Net
-Equity Issuance is excluded from the composite because it is the inverse of Buyback Yield.
+Company rankings use sector-relative metric percentiles averaged into Safety, Quality,
+Growth, Value, Financial Strength, and Capital Allocation groups. Safety is weighted
+25%, Quality 20%, Growth 15%, Value 15%, Financial Strength 15%, and Capital Allocation
+10%; weights for missing groups are renormalized across available groups. A company needs
+a Safety score and at least three available group scores; missing metrics are not imputed.
+Lower STA and SNOA values rank better. Return on Equity and Asset Turnover are included in
+Quality. Current Ratio is scored by closeness to its sector median, and Net Equity
+Issuance is excluded from the composite because it is the inverse of Buyback Yield.
 
 ## Deploy to Streamlit Community Cloud
 
