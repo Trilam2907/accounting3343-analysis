@@ -363,57 +363,10 @@ else:
             "Operating cash flow ÷ total assets",
             "Calculated",
         ),
-        (
-            "Revenue (TTM)",
-            "Sum of four consecutive reported quarters",
-            "Unavailable: quarterly statements are not in this snapshot",
-        ),
-        (
-            "Net Income (TTM)",
-            "Sum of four consecutive reported quarters",
-            "Unavailable: quarterly statements are not in this snapshot",
-        ),
-        (
-            "EBITDA (TTM)",
-            "TTM operating income + TTM depreciation and amortization",
-            "Unavailable: quarterly statements are not in this snapshot",
-        ),
-        (
-            "EPS (Basic)",
-            "Net income ÷ basic weighted-average shares",
-            "Calculated when both inputs exist",
-        ),
-        (
-            "EPS and FCF Growth",
-            "(Current annual value − prior annual value) ÷ absolute prior value",
-            "Calculated when prior value exists and is nonzero",
-        ),
-        ("P/E Ratio", "Current price ÷ positive trailing EPS", "Missing for nonpositive EPS"),
-        (
-            "Debt/Equity",
-            "Total debt ÷ positive total equity",
-            "Missing for nonpositive equity",
-        ),
-        (
-            "Current Ratio",
-            "Current assets ÷ positive current liabilities",
-            "Calculated when denominator is positive",
-        ),
-        (
-            "Buyback / Net Equity Issuance Yield",
-            "Net repurchases / market capitalization; inverse for issuance",
-            "Latest snapshot only; missing inputs remain missing",
-        ),
-        (
-            "STA",
-            "(Net income − operating cash flow) ÷ total assets",
-            "Calculated when inputs exist",
-        ),
-        (
-            "SNOA proxy",
-            "(Debt + equity − cash) ÷ prior-year total assets",
-            "Calculated when inputs exist; proxy, not full operating accruals",
-        ),
+        ("Revenue (TTM)", "Sum of last four reported quarters", "Unavailable in this annual-only snapshot"),
+        ("Net Income (TTM)", "Sum of last four reported quarters", "Unavailable in this annual-only snapshot"),
+        ("EBITDA (TTM)", "Operating income + D&A, using four reported quarters", "Unavailable in this annual-only snapshot"),
+        ("EPS (Basic)", "Net income ÷ basic weighted-average shares", "Calculated when both inputs exist"),
     ]
     show_table(pd.DataFrame(formula_rows, columns=["Metric", "Formula", "Availability"]))
 
@@ -450,8 +403,7 @@ else:
     )
     show_table(coverage)
     st.warning(
-        "The supplied dictionary mentions 97 definitions, but only the definitions shown "
-        "above were provided here. Quarterly TTM metrics are intentionally unavailable. "
+        "Quarterly TTM metrics are intentionally unavailable in this annual-only snapshot. "
         "Yahoo Finance coverage can be incomplete, revised, or inconsistent; unusual "
         "values and cross-company accounting differences require review."
     )
