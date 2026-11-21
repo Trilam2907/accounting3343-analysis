@@ -19,10 +19,9 @@ each company with available statement data.
 
 The app has three sections: an overview with universe and active-screen summaries, a
 stock screener with filters and historical trends, and methodology with formulas,
-calculation policy, and data-quality coverage. TTM metrics are not calculated because
-the bundled source contains annual—not quarterly—statements. The supplied metric list
-included only a subset of the referenced 97 definitions; unprovided definitions are
-not inferred or presented as implemented.
+calculation policy, and data-quality coverage. The supplied metric list included only
+a subset of the referenced 97 definitions; unprovided definitions are not inferred or
+presented as implemented.
 
 ## Deploy to Streamlit Community Cloud
 

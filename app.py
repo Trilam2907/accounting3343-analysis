@@ -17,9 +17,6 @@ METRIC_COLUMNS = [
     "Net Profit Margin (%)",
     "Return on Assets (%)",
     "Return on Equity (%)",
-    "Return on Invested Capital (%)",
-    "Return on Capital Employed (%)",
-    "Incremental ROIC (3y) (%)",
     "Asset Turnover",
     "Operating Cash Flow / Assets (%)",
     "EPS (Basic)",
@@ -50,8 +47,6 @@ HISTORY_METRICS = [
     "Net Profit Margin (%)",
     "Return on Assets (%)",
     "Return on Equity (%)",
-    "Return on Invested Capital (%)",
-    "Return on Capital Employed (%)",
     "Operating Cash Flow / Assets (%)",
     "Asset Turnover",
     "Debt/Equity",
@@ -342,23 +337,8 @@ else:
         ("Net Profit Margin", "Net income ÷ revenue"),
         ("Return on Assets", "Net income ÷ total assets"),
         ("Return on Equity", "Net income ÷ total equity"),
-        (
-            "Return on Invested Capital",
-            "EBIT × (1 − tax rate) ÷ (total debt + total equity − cash)",
-        ),
-        (
-            "Return on Capital Employed",
-            "EBIT ÷ (total assets − current liabilities)",
-        ),
-        (
-            "Incremental ROIC (3y)",
-            "Change in NOPAT over three fiscal years ÷ change in invested capital",
-        ),
         ("Asset Turnover", "Revenue ÷ total assets"),
         ("Operating Cash Flow / Assets", "Operating cash flow ÷ total assets"),
-        ("Revenue (TTM)", "Sum of last four reported quarters"),
-        ("Net Income (TTM)", "Sum of last four reported quarters"),
-        ("EBITDA (TTM)", "Operating income + D&A, using four reported quarters"),
         ("EPS (Basic)", "Net income ÷ basic weighted-average shares"),
     ]
     show_table(pd.DataFrame(formula_rows, columns=["Metric", "Formula"]))
@@ -367,8 +347,8 @@ else:
     st.markdown(
         """
 - **Missing values:** Missing inputs produce no metric. They display as “—”, are excluded from ranks, and are never replaced with zero or an average.
-- **Invalid denominators:** Ratios are omitted when a denominator is missing, zero, or makes the result meaningless. P/E requires positive trailing EPS; ROE and Debt/Equity require positive book equity.
-- **Period alignment:** Calculated metrics use the annual fiscal periods provided by the source. TTM metrics require four consecutive reported quarters with matching fiscal periods and are not calculated from this annual-only snapshot.
+- **Invalid denominators:** Ratios are omitted when a denominator is missing, zero, or makes the result meaningless. P/E requires positive earnings; ROE and Debt/Equity require positive book equity.
+- **Period alignment:** Calculated metrics use the annual fiscal periods provided by the source. Companies with different fiscal year ends are not pooled into calendar periods.
 - **Currency:** Each row carries the provider-reported reporting currency. Ratios use numerator and denominator from the same company; monetary sector comparisons are grouped by currency.
 - **Share counts:** Basic EPS uses net income divided by reported basic weighted-average shares. Counts are used as supplied; split adjustment by the provider is not independently verified and the app applies no additional adjustment.
 - **Restatements:** The provider does not expose a reliable restatement flag in this dataset. The field is missing, rather than marked false; latest revised provider values are used where supplied.
@@ -396,7 +376,6 @@ else:
     )
     show_table(coverage)
     st.warning(
-        "Quarterly TTM metrics are intentionally unavailable in this annual-only snapshot. "
         "Yahoo Finance coverage can be incomplete, revised, or inconsistent; unusual "
         "values and cross-company accounting differences require review."
     )
