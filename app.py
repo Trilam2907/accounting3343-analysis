@@ -265,7 +265,6 @@ visible_ranking_columns = [
     for column in RANKING_COLUMNS
     if column != "Sector Rank" or len(selected_sectors) == 1
 ]
-search = st.sidebar.text_input("Company or ticker contains")
 selected_metrics = st.sidebar.multiselect(
     "Filter by financial metrics",
     METRIC_COLUMNS,
@@ -279,13 +278,6 @@ if selected_sectors:
     screen = screen[screen["Sector"].isin(selected_sectors)]
 else:
     screen = screen.iloc[0:0]
-if search.strip():
-    query = search.strip()
-    matches = (
-        screen["Company"].fillna("").str.contains(query, case=False, regex=False)
-        | screen["Ticker"].fillna("").str.contains(query, case=False, regex=False)
-    )
-    screen = screen[matches]
 
 for metric in selected_metrics:
     values = metrics[metric].dropna()
@@ -335,10 +327,20 @@ if section == "Overview":
         "least 3 group scores; missing values are not imputed."
     )
     st.subheader("Companies passing the active screen")
+    overview_columns = [
+        "Company",
+        "Ticker",
+        "Sector",
+        "Overall Rank",
+        *(
+            ["Sector Rank"]
+            if "Sector Rank" in visible_ranking_columns
+            else []
+        ),
+        "Quality Score",
+    ]
     show_table(
-        screen[IDENTIFIER_COLUMNS + visible_ranking_columns + METRIC_COLUMNS].sort_values(
-            "Overall Rank", na_position="last"
-        )
+        screen[overview_columns].sort_values("Overall Rank", na_position="last")
     )
 
     with st.expander("Complete company financial data", expanded=False):
@@ -406,6 +408,44 @@ if section == "Overview":
                             y_label="Companies",
                             height=220,
                         )
+
+    st.subheader("Metric relationship explorer")
+    st.caption(
+        "Choose a metric for each axis to compare companies with successful downloads. "
+        "Each point is a company, colored by sector; companies missing either value are excluded."
+    )
+    x_column, y_column = st.columns(2)
+    with x_column:
+        x_metric = st.selectbox(
+            "X-axis metric",
+            METRIC_COLUMNS,
+            index=METRIC_COLUMNS.index("Gross Margin (%)"),
+        )
+    with y_column:
+        y_options = [metric for metric in METRIC_COLUMNS if metric != x_metric]
+        y_default = "Operating Margin (%)"
+        y_metric = st.selectbox(
+            "Y-axis metric",
+            y_options,
+            index=y_options.index(y_default) if y_default in y_options else 0,
+        )
+
+    scatter_data = metrics.loc[
+        successful, ["Sector", x_metric, y_metric]
+    ].dropna(subset=[x_metric, y_metric])
+    st.caption(f"{len(scatter_data):,} companies have both selected metrics.")
+    if scatter_data.empty:
+        st.info("No companies have values for both selected metrics.")
+    else:
+        st.scatter_chart(
+            scatter_data,
+            x=x_metric,
+            y=y_metric,
+            x_label=x_metric,
+            y_label=y_metric,
+            color="Sector",
+            height=500,
+        )
 
 elif section == "Stock Screener":
     st.header("Stock Screener")
