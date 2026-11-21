@@ -335,40 +335,33 @@ else:
 
     st.subheader("Metric dictionary")
     formula_rows = [
-        ("Gross Profitability", "Gross profit ÷ total assets", "Calculated"),
-        ("Gross Margin", "Gross profit ÷ revenue", "Calculated"),
-        ("Operating Margin", "Operating income ÷ revenue", "Calculated"),
-        ("EBITDA Margin", "(Operating income + D&A) ÷ revenue", "Calculated"),
-        ("Net Profit Margin", "Net income ÷ revenue", "Calculated"),
-        ("Return on Assets", "Net income ÷ total assets", "Calculated"),
-        ("Return on Equity", "Net income ÷ total equity", "Calculated"),
+        ("Gross Profitability", "Gross profit ÷ total assets"),
+        ("Gross Margin", "Gross profit ÷ revenue"),
+        ("Operating Margin", "Operating income ÷ revenue"),
+        ("EBITDA Margin", "(Operating income + D&A) ÷ revenue"),
+        ("Net Profit Margin", "Net income ÷ revenue"),
+        ("Return on Assets", "Net income ÷ total assets"),
+        ("Return on Equity", "Net income ÷ total equity"),
         (
             "Return on Invested Capital",
             "EBIT × (1 − tax rate) ÷ (total debt + total equity − cash)",
-            "Calculated when all inputs exist",
         ),
         (
             "Return on Capital Employed",
             "EBIT ÷ (total assets − current liabilities)",
-            "Calculated when all inputs exist",
         ),
         (
             "Incremental ROIC (3y)",
             "Change in NOPAT over three fiscal years ÷ change in invested capital",
-            "Calculated when both periods exist and capital change is positive",
         ),
-        ("Asset Turnover", "Revenue ÷ total assets", "Calculated"),
-        (
-            "Operating Cash Flow / Assets",
-            "Operating cash flow ÷ total assets",
-            "Calculated",
-        ),
-        ("Revenue (TTM)", "Sum of last four reported quarters", "Unavailable in this annual-only snapshot"),
-        ("Net Income (TTM)", "Sum of last four reported quarters", "Unavailable in this annual-only snapshot"),
-        ("EBITDA (TTM)", "Operating income + D&A, using four reported quarters", "Unavailable in this annual-only snapshot"),
-        ("EPS (Basic)", "Net income ÷ basic weighted-average shares", "Calculated when both inputs exist"),
+        ("Asset Turnover", "Revenue ÷ total assets"),
+        ("Operating Cash Flow / Assets", "Operating cash flow ÷ total assets"),
+        ("Revenue (TTM)", "Sum of last four reported quarters"),
+        ("Net Income (TTM)", "Sum of last four reported quarters"),
+        ("EBITDA (TTM)", "Operating income + D&A, using four reported quarters"),
+        ("EPS (Basic)", "Net income ÷ basic weighted-average shares"),
     ]
-    show_table(pd.DataFrame(formula_rows, columns=["Metric", "Formula", "Availability"]))
+    show_table(pd.DataFrame(formula_rows, columns=["Metric", "Formula"]))
 
     st.subheader("Calculation policy")
     st.markdown(
