@@ -23,6 +23,11 @@ calculation policy, and data-quality coverage. The supplied metric list included
 a subset of the referenced 97 definitions; unprovided definitions are not inferred or
 presented as implemented.
 
+Company rankings use sector-relative metric percentiles averaged into five equally
+weighted groups. At least three available group scores are required; missing metrics
+are not imputed. Current Ratio is scored by closeness to its sector median, and Net
+Equity Issuance is excluded from the composite because it is the inverse of Buyback Yield.
+
 ## Deploy to Streamlit Community Cloud
 
 Push this repository to GitHub, then create an app in Streamlit Community Cloud using

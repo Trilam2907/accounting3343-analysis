@@ -30,6 +30,33 @@ METRIC_COLUMNS = [
     "STA (%)",
     "SNOA (%)",
 ]
+RANKING_GROUPS = {
+    "Quality": [
+        ("Gross Profitability", True),
+        ("Gross Margin (%)", True),
+        ("Operating Margin (%)", True),
+        ("EBITDA Margin (%)", True),
+        ("Net Profit Margin (%)", True),
+        ("Return on Assets (%)", True),
+        ("Operating Cash Flow / Assets (%)", True),
+    ],
+    "Growth": [
+        ("EPS Growth (%)", True),
+        ("FCF Growth (%)", True),
+    ],
+    "Value": [("P/E Ratio", False)],
+    "Financial Strength": [
+        ("Debt/Equity", False),
+        ("Current Ratio", "sector_median"),
+    ],
+    "Capital Allocation": [("Buyback Yield (%)", True)],
+}
+RANKING_COLUMNS = [
+    "Overall Rank",
+    "Sector Rank",
+    "Composite Score",
+    *[f"{group} Score" for group in RANKING_GROUPS],
+]
 METADATA_COLUMNS = [
     "Calculation Timestamp",
     "Formula Version",
@@ -110,6 +137,57 @@ def load_history() -> pd.DataFrame:
     return data.dropna(subset=["Fiscal Year"])
 
 
+def add_rankings(data: pd.DataFrame) -> pd.DataFrame:
+    ranked = data.copy()
+    usable = ranked[STATUS_COLUMN].eq("OK")
+    group_scores = pd.DataFrame(index=ranked.index)
+
+    for group_name, factors in RANKING_GROUPS.items():
+        factor_scores = []
+        for metric, direction in factors:
+            values = pd.to_numeric(ranked[metric], errors="coerce").where(usable)
+            if metric in {"P/E Ratio", "Debt/Equity", "Current Ratio"}:
+                values = values.where(values > 0)
+
+            if direction == "sector_median":
+                sector_medians = values.groupby(
+                    ranked["Sector"], dropna=False
+                ).transform("median")
+                relative = -(values - sector_medians).abs()
+                score = relative.groupby(
+                    ranked["Sector"], dropna=False
+                ).rank(pct=True) * 100
+            else:
+                score = values.groupby(
+                    ranked["Sector"], dropna=False
+                ).rank(pct=True, ascending=bool(direction)) * 100
+            factor_scores.append(score)
+
+        group_scores[f"{group_name} Score"] = pd.concat(
+            factor_scores, axis=1
+        ).mean(axis=1)
+
+    ranked = pd.concat([ranked, group_scores], axis=1)
+    ranked["Composite Score"] = group_scores.mean(axis=1)
+    eligible = usable & group_scores.notna().sum(axis=1).ge(3)
+    ranked["Overall Rank"] = np.nan
+    ranked["Sector Rank"] = np.nan
+    ranked.loc[eligible, "Overall Rank"] = (
+        ranked.loc[eligible, "Composite Score"]
+        .rank(method="min", ascending=False)
+        .astype(int)
+    )
+    ranked.loc[eligible, "Sector Rank"] = (
+        ranked.loc[eligible]
+        .groupby("Sector", dropna=False)["Composite Score"]
+        .rank(method="min", ascending=False)
+        .astype(int)
+    )
+    ranked["Overall Rank"] = ranked["Overall Rank"].astype("Int64")
+    ranked["Sector Rank"] = ranked["Sector Rank"].astype("Int64")
+    return ranked
+
+
 def format_number(value: object) -> str:
     if pd.isna(value):
         return "—"
@@ -174,6 +252,7 @@ except (FileNotFoundError, ValueError, pd.errors.ParserError) as error:
     st.error(f"Could not load stock data: {error}")
     st.stop()
 
+metrics = add_rankings(metrics)
 successful = metrics[STATUS_COLUMN].eq("OK")
 sectors = sorted(metrics["Sector"].dropna().astype(str).unique())
 
@@ -243,8 +322,18 @@ if section == "Overview":
     metric_columns[2].metric("Passing active screen", f"{len(screen):,}")
     metric_columns[3].metric("Incomplete downloads", f"{int((~successful).sum()):,}")
 
+    st.info(
+        "Ranking converts metrics to sector-relative percentiles, averages them within "
+        "five equally weighted groups—Quality, Growth, Value, Financial Strength, and "
+        "Capital Allocation—then averages available group scores. A company needs at "
+        "least 3 group scores; missing values are not imputed."
+    )
     st.subheader("Companies passing the active screen")
-    show_table(screen[IDENTIFIER_COLUMNS + METRIC_COLUMNS].sort_values("Ticker"))
+    show_table(
+        screen[IDENTIFIER_COLUMNS + RANKING_COLUMNS + METRIC_COLUMNS].sort_values(
+            "Overall Rank", na_position="last"
+        )
+    )
 
     with st.expander("Complete company financial data", expanded=False):
         st.caption(
@@ -315,12 +404,21 @@ if section == "Overview":
 elif section == "Stock Screener":
     st.header("Stock Screener")
     st.caption(f"{len(screen):,} of {len(metrics):,} companies pass the active filters.")
+    st.info(
+        "Scores are sector-relative 0–100 percentiles, averaged within five equally "
+        "weighted groups: Quality, Growth, Value, Financial Strength, and Capital "
+        "Allocation. At least 3 groups are required for an overall rank; missing values "
+        "are not imputed. Higher is better except P/E and Debt/Equity, which are "
+        "reverse-ranked; Current Ratio scores by closeness to its sector median. "
+        "Buyback Yield represents capital allocation; its inverse, Net Equity Issuance, "
+        "is excluded to avoid double-counting."
+    )
     normalization = st.sidebar.selectbox(
         "Comparison columns",
         ["None", "Percentile rank (0–100)", "Z-score"],
     )
 
-    result = screen[IDENTIFIER_COLUMNS + METRIC_COLUMNS].copy()
+    result = screen[IDENTIFIER_COLUMNS + RANKING_COLUMNS + METRIC_COLUMNS].copy()
     if normalization == "Percentile rank (0–100)":
         for metric in selected_metrics or METRIC_COLUMNS:
             result[f"{metric} Percentile"] = metrics[metric].rank(pct=True) * 100
@@ -334,7 +432,9 @@ elif section == "Stock Screener":
                     result[metric] - metrics[metric].mean()
                 ) / deviation
 
-    result = result.sort_values("Ticker", kind="stable").reset_index(drop=True)
+    result = result.sort_values(
+        ["Overall Rank", "Ticker"], kind="stable", na_position="last"
+    ).reset_index(drop=True)
     show_table(result, height=600)
     st.download_button(
         "Download passing screen as CSV",
@@ -453,6 +553,16 @@ else:
         ("SNOA (%)", "(Total debt + total equity − cash and short-term investments) ÷ prior-year total assets × 100"),
     ]
     show_table(pd.DataFrame(formula_rows, columns=["Metric", "Formula"]))
+
+    st.subheader("Ranking")
+    st.markdown(
+        "Each metric is converted to a sector-relative percentile. Metric percentiles "
+        "are averaged within **Quality**, **Growth**, **Value**, **Financial Strength**, "
+        "and **Capital Allocation**, then the five group scores are averaged equally. "
+        "At least three available group scores are required to rank a company. Missing "
+        "values are excluded, not imputed; Net Equity Issuance is omitted from the score "
+        "because it is the inverse of Buyback Yield."
+    )
 
     st.subheader("Calculation policy")
     st.markdown(
