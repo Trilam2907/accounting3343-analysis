@@ -235,6 +235,16 @@ if section == "Overview":
         )
     show_table(distribution.reset_index())
 
+    st.subheader("Companies passing the active screen")
+    show_table(screen[IDENTIFIER_COLUMNS + METRIC_COLUMNS].sort_values("Ticker"))
+
+    with st.expander("Complete company financial data", expanded=False):
+        st.caption(
+            "All companies and calculated metrics in the bundled snapshot, including "
+            "incomplete-download rows. Missing values appear as —."
+        )
+        show_table(metrics)
+
     st.subheader("Metric distributions")
     st.caption(
         "Histograms show the distribution among companies with successful downloads. "
@@ -293,16 +303,6 @@ if section == "Overview":
                             y_label="Companies",
                             height=220,
                         )
-
-    st.subheader("Companies passing the active screen")
-    show_table(screen[IDENTIFIER_COLUMNS + METRIC_COLUMNS].sort_values("Ticker"))
-
-    with st.expander("Complete company financial data", expanded=False):
-        st.caption(
-            "All companies and calculated metrics in the bundled snapshot, including "
-            "incomplete-download rows. Missing values appear as —."
-        )
-        show_table(metrics)
 
 elif section == "Stock Screener":
     st.header("Stock Screener")
