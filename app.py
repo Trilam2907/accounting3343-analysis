@@ -198,43 +198,6 @@ if section == "Overview":
     metric_columns[2].metric("Passing active screen", f"{len(screen):,}")
     metric_columns[3].metric("Incomplete downloads", f"{int((~successful).sum()):,}")
 
-    st.subheader("Sector distribution")
-    distribution = (
-        metrics.assign(
-            **{
-                "Passing active screen": metrics["Ticker"].isin(screen["Ticker"]),
-                "Complete record": successful,
-            }
-        )
-        .groupby("Sector", dropna=False)
-        .agg(
-            **{
-                "Universe": ("Ticker", "count"),
-                "Complete records": ("Complete record", "sum"),
-                "Passing active screen": ("Passing active screen", "sum"),
-            }
-        )
-        .sort_values("Universe", ascending=False)
-    )
-    chart_columns = st.columns(2)
-    with chart_columns[0]:
-        st.caption("Universe")
-        st.bar_chart(
-            distribution[["Universe"]],
-            horizontal=True,
-            height=280,
-            color="#4C78A8",
-        )
-    with chart_columns[1]:
-        st.caption("Passing screen")
-        st.bar_chart(
-            distribution[["Passing active screen"]],
-            horizontal=True,
-            height=280,
-            color="#59A14F",
-        )
-    show_table(distribution.reset_index())
-
     st.subheader("Companies passing the active screen")
     show_table(screen[IDENTIFIER_COLUMNS + METRIC_COLUMNS].sort_values("Ticker"))
 
