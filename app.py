@@ -331,15 +331,24 @@ else:
     st.subheader("Metric dictionary")
     formula_rows = [
         ("Gross Profitability", "Gross profit ÷ total assets"),
-        ("Gross Margin", "Gross profit ÷ revenue"),
-        ("Operating Margin", "Operating income ÷ revenue"),
-        ("EBITDA Margin", "(Operating income + D&A) ÷ revenue"),
-        ("Net Profit Margin", "Net income ÷ revenue"),
-        ("Return on Assets", "Net income ÷ total assets"),
-        ("Return on Equity", "Net income ÷ total equity"),
+        ("Gross Margin (%)", "Gross profit ÷ revenue × 100"),
+        ("Operating Margin (%)", "Operating income ÷ revenue × 100"),
+        ("EBITDA Margin (%)", "(Operating income + depreciation and amortization) ÷ revenue × 100"),
+        ("Net Profit Margin (%)", "Net income ÷ revenue × 100"),
+        ("Return on Assets (%)", "Net income ÷ total assets × 100"),
+        ("Return on Equity (%)", "Net income ÷ total equity × 100"),
         ("Asset Turnover", "Revenue ÷ total assets"),
-        ("Operating Cash Flow / Assets", "Operating cash flow ÷ total assets"),
+        ("Operating Cash Flow / Assets (%)", "Operating cash flow ÷ total assets × 100"),
         ("EPS (Basic)", "Net income ÷ basic weighted-average shares"),
+        ("Buyback Yield (%)", "(Share repurchases − share issuance) ÷ current market capitalization × 100"),
+        ("Net Equity Issuance (%)", "(Share issuance − share repurchases) ÷ current market capitalization × 100"),
+        ("P/E Ratio", "Current share price ÷ positive trailing EPS"),
+        ("Debt/Equity", "Total debt ÷ total equity"),
+        ("Current Ratio", "Current assets ÷ current liabilities"),
+        ("EPS Growth (%)", "(Current annual EPS − prior annual EPS) ÷ absolute prior annual EPS × 100"),
+        ("FCF Growth (%)", "(Current annual free cash flow − prior annual free cash flow) ÷ absolute prior annual free cash flow × 100"),
+        ("STA (%)", "(Net income − operating cash flow) ÷ total assets × 100"),
+        ("SNOA (%)", "(Total debt + total equity − cash and short-term investments) ÷ prior-year total assets × 100"),
     ]
     show_table(pd.DataFrame(formula_rows, columns=["Metric", "Formula"]))
 
