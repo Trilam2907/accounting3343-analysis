@@ -7,7 +7,7 @@ import streamlit as st
 
 DATA_FILE = Path(__file__).parent / "sp500_all_company_metrics.csv"
 HISTORY_FILE = Path(__file__).parent / "sp500_three_year_historical_metrics.csv"
-IDENTIFIER_COLUMNS = ["Company", "Ticker", "Sector", "Industry", "Reporting Currency"]
+IDENTIFIER_COLUMNS = ["Company", "Ticker", "Sector", "Reporting Currency"]
 STATUS_COLUMN = "Download Status"
 METRIC_COLUMNS = [
     "Gross Profitability",
@@ -86,7 +86,7 @@ HISTORY_METRICS = [
 MONETARY_COLUMNS = {"Revenue", "Net Income", "Free Cash Flow"}
 FORMULA_VERSION = "1.1.0"
 SNAPSHOT_LABEL = "November 20, 2026"
-DATA_VERSION = "gics-sectors-2026-11-21"
+DATA_VERSION = "broad-sectors-no-industry-2026-11-21"
 
 
 st.set_page_config(page_title="S&P 500 Stock Screener", page_icon="📊", layout="wide")
