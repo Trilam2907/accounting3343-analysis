@@ -86,13 +86,14 @@ HISTORY_METRICS = [
 MONETARY_COLUMNS = {"Revenue", "Net Income", "Free Cash Flow"}
 FORMULA_VERSION = "1.1.0"
 SNAPSHOT_LABEL = "November 20, 2026"
+DATA_VERSION = "gics-sectors-2026-11-21"
 
 
 st.set_page_config(page_title="S&P 500 Stock Screener", page_icon="📊", layout="wide")
 
 
 @st.cache_data
-def load_metrics() -> pd.DataFrame:
+def load_metrics(_data_version: str) -> pd.DataFrame:
     if not DATA_FILE.is_file():
         raise FileNotFoundError(f"Dataset not found: {DATA_FILE.name}")
 
@@ -112,7 +113,7 @@ def load_metrics() -> pd.DataFrame:
 
 
 @st.cache_data
-def load_history() -> pd.DataFrame:
+def load_history(_data_version: str) -> pd.DataFrame:
     if not HISTORY_FILE.is_file():
         raise FileNotFoundError(f"Historical dataset not found: {HISTORY_FILE.name}")
 
@@ -246,8 +247,8 @@ st.caption(
 )
 
 try:
-    metrics = load_metrics()
-    history = load_history()
+    metrics = load_metrics(DATA_VERSION)
+    history = load_history(DATA_VERSION)
 except (FileNotFoundError, ValueError, pd.errors.ParserError) as error:
     st.error(f"Could not load stock data: {error}")
     st.stop()
