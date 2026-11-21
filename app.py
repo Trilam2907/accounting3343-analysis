@@ -56,6 +56,7 @@ HISTORY_METRICS = [
     "STA (%)",
     "SNOA (%)",
 ]
+MONETARY_COLUMNS = {"Revenue", "Net Income", "Free Cash Flow"}
 FORMULA_VERSION = "1.1.0"
 SNAPSHOT_LABEL = "November 20, 2026"
 
@@ -109,11 +110,55 @@ def load_history() -> pd.DataFrame:
     return data.dropna(subset=["Fiscal Year"])
 
 
+def format_number(value: object) -> str:
+    if pd.isna(value):
+        return "—"
+    rounded = f"{float(value):,.2f}".rstrip("0").rstrip(".")
+    return "0" if rounded in {"-0", ""} else rounded
+
+
+def format_amount(value: object, currency: object) -> str:
+    if pd.isna(value):
+        return "—"
+    amount = float(value)
+    absolute = abs(amount)
+    for threshold, suffix in (
+        (1_000_000_000_000, "T"),
+        (1_000_000_000, "B"),
+        (1_000_000, "M"),
+        (1_000, "K"),
+    ):
+        if absolute >= threshold:
+            compact = f"{format_number(amount / threshold)}{suffix}"
+            break
+    else:
+        compact = format_number(amount)
+    currency_label = str(currency).strip() if pd.notna(currency) else ""
+    return f"{currency_label} {compact}".strip()
+
+
 def show_table(data: pd.DataFrame, *, height: int | None = None) -> None:
+    display_data = data.copy()
+    formatters = {
+        column: format_number
+        for column in display_data.select_dtypes(include="number").columns
+    }
+    currency = display_data.get(
+        "Reporting Currency", pd.Series("", index=display_data.index)
+    )
+    for column in MONETARY_COLUMNS.intersection(display_data.columns):
+        display_data[column] = [
+            format_amount(value, currency.loc[index])
+            for index, value in display_data[column].items()
+        ]
+        formatters.pop(column, None)
     options = {"hide_index": True, "width": "stretch"}
     if height is not None:
         options["height"] = height
-    st.dataframe(data.style.format(na_rep="—", precision=2, thousands=","), **options)
+    st.dataframe(
+        display_data.style.format(formatter=formatters, na_rep="—"),
+        **options,
+    )
 
 
 st.title("S&P 500 Stock Screener")
@@ -255,7 +300,7 @@ if section == "Overview":
                             st.info("No values available.")
                             continue
                         counts, edges = np.histogram(values, bins=min(20, max(1, len(values))))
-                        centers = (edges[:-1] + edges[1:]) / 2
+                        centers = np.round((edges[:-1] + edges[1:]) / 2, 2)
                         chart = pd.DataFrame(
                             {"Companies": counts},
                             index=pd.Index(centers, name=metric),
@@ -323,10 +368,31 @@ elif section == "Stock Screener":
     if chart_history.empty:
         st.info(f"No {history_metric} observations are available for this company.")
     else:
+        chart_values = chart_history.set_index("Fiscal Year")[[history_metric]].copy()
+        chart_label = history_metric
+        if history_metric in MONETARY_COLUMNS:
+            currency = chart_history["Reporting Currency"].dropna()
+            currency_label = currency.iloc[0] if not currency.empty else "Currency"
+            maximum = chart_values[history_metric].abs().max()
+            divisor, suffix = next(
+                (
+                    (threshold, unit)
+                    for threshold, unit in (
+                        (1_000_000_000_000, "T"),
+                        (1_000_000_000, "B"),
+                        (1_000_000, "M"),
+                        (1_000, "K"),
+                    )
+                    if maximum >= threshold
+                ),
+                (1, ""),
+            )
+            chart_values[history_metric] /= divisor
+            chart_label = f"{history_metric} ({currency_label} {suffix})".strip()
         st.line_chart(
-            chart_history.set_index("Fiscal Year")[[history_metric]],
+            chart_values,
             x_label="Fiscal year",
-            y_label=history_metric,
+            y_label=chart_label,
         )
         show_table(chart_history[["Fiscal Year", history_metric]].reset_index(drop=True))
 
