@@ -471,11 +471,11 @@ if section == "Overview":
         complete_columns = [
             "Overall Rank",
             "Sector Rank",
-            "Composite Score",
-            *[f"{group} Score" for group in RANKING_GROUPS],
             "Company",
             "Ticker",
             "Sector",
+            "Composite Score",
+            *[f"{group} Score" for group in RANKING_GROUPS],
             "Reporting Currency",
             *[
                 column
