@@ -19,6 +19,9 @@ METRIC_COLUMNS = [
     "Return on Equity (%)",
     "Asset Turnover",
     "Operating Cash Flow / Assets (%)",
+    "FCFTA (%)",
+    "EBIT/TEV (%)",
+    "ROC (%)",
     "EPS (Basic)",
     "Buyback Yield (%)",
     "Net Equity Issuance (%)",
@@ -30,40 +33,69 @@ METRIC_COLUMNS = [
     "STA (%)",
     "SNOA (%)",
 ]
+FILTER_GROUPS = {
+    "Accruals and Manipulation": ["STA (%)", "SNOA (%)"],
+    "Financial Distress": [
+        "Debt/Equity",
+        "Current Ratio",
+        "Operating Cash Flow / Assets (%)",
+    ],
+    "Value and Franchise": [
+        "P/E Ratio",
+        "EBIT/TEV (%)",
+        "ROC (%)",
+        "Asset Turnover",
+        "Gross Profitability",
+        "Gross Margin (%)",
+        "Operating Margin (%)",
+        "EBITDA Margin (%)",
+        "Net Profit Margin (%)",
+    ],
+    "Financial Strength": [
+        "Return on Assets (%)",
+        "Gross Profitability",
+        "Debt/Equity",
+        "Current Ratio",
+        "Return on Equity (%)",
+        "FCFTA (%)",
+    ],
+    "Recent Operational Improvements": ["EPS Growth (%)", "FCF Growth (%)"],
+}
 RANKING_GROUPS = {
-    "Safety": [
+    "Accruals and Manipulation": [
         ("STA (%)", False),
         ("SNOA (%)", False),
     ],
-    "Quality": [
-        ("Gross Profitability", True),
-        ("Gross Margin (%)", True),
-        ("Operating Margin (%)", True),
-        ("EBITDA Margin (%)", True),
-        ("Net Profit Margin (%)", True),
-        ("Return on Assets (%)", True),
-        ("Return on Equity (%)", True),
-        ("Asset Turnover", True),
+    "Financial Distress": [
+        ("Debt/Equity", False),
+        ("Current Ratio", "sector_median"),
         ("Operating Cash Flow / Assets (%)", True),
     ],
-    "Growth": [
+    "Value and Franchise": [
+        ("P/E Ratio", False),
+        ("EBIT/TEV (%)", True),
+        ("ROC (%)", True),
+        ("Asset Turnover", True),
+    ],
+    "Financial Strength": [
+        ("Return on Assets (%)", True),
+        ("Gross Profitability", True),
+        ("Debt/Equity", False),
+        ("Current Ratio", "sector_median"),
+        ("Return on Equity (%)", True),
+        ("FCFTA (%)", True),
+    ],
+    "Recent Operational Improvements": [
         ("EPS Growth (%)", True),
         ("FCF Growth (%)", True),
     ],
-    "Value": [("P/E Ratio", False)],
-    "Financial Strength": [
-        ("Debt/Equity", False),
-        ("Current Ratio", "sector_median"),
-    ],
-    "Capital Allocation": [("Buyback Yield (%)", True)],
 }
 RANKING_WEIGHTS = {
-    "Safety": 0.25,
-    "Quality": 0.20,
-    "Growth": 0.15,
-    "Value": 0.15,
-    "Financial Strength": 0.15,
-    "Capital Allocation": 0.10,
+    "Accruals and Manipulation": 0.20,
+    "Financial Distress": 0.20,
+    "Value and Franchise": 0.20,
+    "Financial Strength": 0.20,
+    "Recent Operational Improvements": 0.20,
 }
 RANKING_COLUMNS = [
     "Overall Rank",
@@ -89,6 +121,7 @@ HISTORY_METRICS = [
     "Return on Assets (%)",
     "Return on Equity (%)",
     "Operating Cash Flow / Assets (%)",
+    "FCFTA (%)",
     "Asset Turnover",
     "Debt/Equity",
     "Current Ratio",
@@ -98,9 +131,9 @@ HISTORY_METRICS = [
     "SNOA (%)",
 ]
 MONETARY_COLUMNS = {"Revenue", "Net Income", "Free Cash Flow"}
-FORMULA_VERSION = "1.1.0"
+FORMULA_VERSION = "1.3.0"
 SNAPSHOT_LABEL = "November 20, 2026"
-DATA_VERSION = "broad-sectors-safety-first-2026-11-21"
+DATA_VERSION = "screening-framework-2026-11-22"
 
 
 st.set_page_config(page_title="S&P 500 Stock Screener", page_icon="📊", layout="wide")
@@ -163,6 +196,18 @@ def add_rankings(data: pd.DataFrame) -> pd.DataFrame:
             values = pd.to_numeric(ranked[metric], errors="coerce").where(usable)
             if metric in {"P/E Ratio", "Debt/Equity", "Current Ratio"}:
                 values = values.where(values > 0)
+            if metric == "P/E Ratio":
+                values = values.where(values <= 1000)
+            if metric == "Debt/Equity":
+                values = values.where(values <= 50)
+            if metric == "Current Ratio":
+                values = values.where(values <= 10)
+            if metric == "Return on Equity (%)":
+                values = values.where(values.abs() <= 500)
+            if metric in {"ROC (%)", "FCFTA (%)"}:
+                values = values.where(values.abs() <= 500)
+            if metric == "EBIT/TEV (%)":
+                values = values.where(values.abs() <= 500)
 
             if direction == "sector_median":
                 sector_medians = values.groupby(
@@ -196,7 +241,6 @@ def add_rankings(data: pd.DataFrame) -> pd.DataFrame:
     ).where(group_scores.notna().any(axis=1))
     eligible = (
         usable
-        & group_scores["Safety Score"].notna()
         & group_scores.notna().sum(axis=1).ge(3)
     )
     ranked["Overall Rank"] = np.nan
@@ -281,9 +325,9 @@ except (FileNotFoundError, ValueError, pd.errors.ParserError) as error:
     st.error(f"Could not load stock data: {error}")
     st.stop()
 
-metrics = add_rankings(metrics)
 successful = metrics[STATUS_COLUMN].eq("OK")
 sectors = sorted(metrics["Sector"].dropna().astype(str).unique())
+metrics = add_rankings(metrics)
 
 st.sidebar.header("Active screen")
 include_download_issues = st.sidebar.checkbox("Include incomplete download rows", value=False)
@@ -293,12 +337,6 @@ visible_ranking_columns = [
     for column in RANKING_COLUMNS
     if column != "Sector Rank" or len(selected_sectors) == 1
 ]
-selected_metrics = st.sidebar.multiselect(
-    "Filter by financial metrics",
-    METRIC_COLUMNS,
-    help="Rows missing a selected metric are excluded. Missing values are never treated as zero.",
-)
-
 screen = metrics.copy()
 if not include_download_issues:
     screen = screen[successful]
@@ -307,31 +345,42 @@ if selected_sectors:
 else:
     screen = screen.iloc[0:0]
 
-for metric in selected_metrics:
-    values = metrics[metric].dropna()
-    if values.empty:
-        st.sidebar.caption(f"{metric}: no reported values")
-        screen = screen.iloc[0:0]
-        continue
+selected_metrics = []
+with st.sidebar.expander("Metric filters", expanded=False):
+    for group_name, group_metrics in FILTER_GROUPS.items():
+        with st.expander(group_name, expanded=False):
+            group_selection = st.multiselect(
+                "Metrics",
+                group_metrics,
+                key=f"filter_select_{group_name}",
+                label_visibility="collapsed",
+            )
+            for metric in group_selection:
+                values = metrics[metric].dropna()
+                if values.empty:
+                    st.caption(f"{metric}: no reported values")
+                    screen = screen.iloc[0:0]
+                    continue
 
-    low, high = float(values.min()), float(values.max())
-    if low == high:
-        st.sidebar.caption(f"{metric}: {low:.3g} (only reported value)")
-        screen = screen[screen[metric].eq(low)]
-        continue
+                low, high = float(values.min()), float(values.max())
+                if low == high:
+                    st.caption(f"{metric}: {low:.3g} (only reported value)")
+                    screen = screen[screen[metric].eq(low)]
+                    continue
 
-    selected_range = st.sidebar.slider(
-        metric,
-        min_value=low,
-        max_value=high,
-        value=(low, high),
-        key=f"range_{metric}",
-        help="Range is based on all available records, before other filters.",
-    )
-    screen = screen[
-        screen[metric].notna()
-        & screen[metric].between(selected_range[0], selected_range[1])
-    ]
+                selected_range = st.slider(
+                    metric,
+                    min_value=low,
+                    max_value=high,
+                    value=(low, high),
+                    key=f"range_{group_name}_{metric}",
+                    help="Range is based on all available records, before other filters.",
+                )
+                screen = screen[
+                    screen[metric].notna()
+                    & screen[metric].between(selected_range[0], selected_range[1])
+                ]
+                selected_metrics.append(metric)
 
 section = st.radio(
     "Section",
@@ -348,13 +397,28 @@ if section == "Overview":
     metric_columns[2].metric("Passing active screen", f"{len(screen):,}")
     metric_columns[3].metric("Incomplete downloads", f"{int((~successful).sum()):,}")
 
-    st.info(
-        "Ranking converts metrics to sector-relative percentiles, then combines six "
-        "groups with Safety weighted highest (25%), followed by Quality (20%), Growth "
-        "(15%), Value (15%), Financial Strength (15%), and Capital Allocation (10%). "
-        "A company needs a Safety score and at least three total group scores; missing "
-        "values are not imputed."
+    st.caption(
+        "Five screening areas are equally weighted: accrual/manipulation risk, "
+        "financial distress, value/franchise, financial strength, and recent "
+        "operational improvements. "
+        "Missing values are excluded and missing weights are renormalized."
     )
+    st.subheader("Top companies")
+    top_screen = screen.dropna(subset=["Overall Rank"]).sort_values(
+        ["Overall Rank", "Ticker"], kind="stable"
+    ).head(3)
+    if top_screen.empty:
+        st.info("No ranked companies match the active screen.")
+    else:
+        top_columns = st.columns(min(3, len(top_screen)))
+        for column, (_, company) in zip(top_columns, top_screen.iterrows()):
+            with column:
+                st.metric(
+                    f"#{int(company['Overall Rank'])} · {company['Ticker']}",
+                    format_number(company["Composite Score"]),
+                    help=f"{company['Company']} · {company['Sector']}",
+                )
+
     st.subheader("Companies passing the active screen")
     overview_columns = [
         "Company",
@@ -366,7 +430,12 @@ if section == "Overview":
             if "Sector Rank" in visible_ranking_columns
             else []
         ),
-        "Quality Score",
+        "Composite Score",
+        "Accruals and Manipulation Score",
+        "Financial Distress Score",
+        "Value and Franchise Score",
+        "Financial Strength Score",
+        "Recent Operational Improvements Score",
     ]
     show_table(
         screen[overview_columns].sort_values("Overall Rank", na_position="last")
@@ -379,12 +448,12 @@ if section == "Overview":
         )
         show_table(metrics)
 
-    st.subheader("Metric distributions")
-    st.caption(
-        "Histograms show the distribution among companies with successful downloads. "
-        "Missing values are reported for each metric and are not treated as zero."
-    )
-    distribution_groups = {
+    with st.expander("Metric distributions", expanded=False):
+        st.caption(
+            "Histograms show the distribution among companies with successful downloads. "
+            "Missing values are reported for each metric and are not treated as zero."
+        )
+        distribution_groups = {
         "Profitability and returns": [
             "Gross Profitability",
             "Gross Margin (%)",
@@ -401,42 +470,44 @@ if section == "Overview":
             "Buyback Yield (%)",
             "Net Equity Issuance (%)",
             "P/E Ratio",
+            "EBIT/TEV (%)",
+            "ROC (%)",
         ],
-        "Financial strength": ["Debt/Equity", "Current Ratio"],
+        "Financial strength": ["Debt/Equity", "Current Ratio", "FCFTA (%)"],
         "Growth and accounting": [
             "EPS Growth (%)",
             "FCF Growth (%)",
             "STA (%)",
             "SNOA (%)",
         ],
-    }
-    for group_name, group_metrics in distribution_groups.items():
-        with st.expander(group_name, expanded=False):
-            for start in range(0, len(group_metrics), 2):
-                chart_columns = st.columns(2)
-                for column, metric in zip(chart_columns, group_metrics[start : start + 2]):
-                    values = metrics.loc[successful, metric].dropna()
-                    missing_count = int(successful.sum() - len(values))
-                    with column:
-                        st.markdown(f"**{metric}**")
-                        st.caption(
-                            f"{len(values):,} available · {missing_count:,} missing"
-                        )
-                        if values.empty:
-                            st.info("No values available.")
-                            continue
-                        counts, edges = np.histogram(values, bins=min(20, max(1, len(values))))
-                        centers = np.round((edges[:-1] + edges[1:]) / 2, 2)
-                        chart = pd.DataFrame(
-                            {"Companies": counts},
-                            index=pd.Index(centers, name=metric),
-                        )
-                        st.bar_chart(
-                            chart,
-                            x_label=metric,
-                            y_label="Companies",
-                            height=220,
-                        )
+        }
+        for group_name, group_metrics in distribution_groups.items():
+            with st.expander(group_name, expanded=False):
+                for start in range(0, len(group_metrics), 2):
+                    chart_columns = st.columns(2)
+                    for column, metric in zip(chart_columns, group_metrics[start : start + 2]):
+                        values = metrics.loc[successful, metric].dropna()
+                        missing_count = int(successful.sum() - len(values))
+                        with column:
+                            st.markdown(f"**{metric}**")
+                            st.caption(
+                                f"{len(values):,} available · {missing_count:,} missing"
+                            )
+                            if values.empty:
+                                st.info("No values available.")
+                                continue
+                            counts, edges = np.histogram(values, bins=min(20, max(1, len(values))))
+                            centers = np.round((edges[:-1] + edges[1:]) / 2, 2)
+                            chart = pd.DataFrame(
+                                {"Companies": counts},
+                                index=pd.Index(centers, name=metric),
+                            )
+                            st.bar_chart(
+                                chart,
+                                x_label=metric,
+                                y_label="Companies",
+                                height=220,
+                            )
 
     st.subheader("Metric relationship explorer")
     st.caption(
@@ -479,25 +550,54 @@ if section == "Overview":
 elif section == "Stock Screener":
     st.header("Stock Screener")
     st.caption(f"{len(screen):,} of {len(metrics):,} companies pass the active filters.")
-    st.info(
-        "Scores are sector-relative 0–100 percentiles. Safety is weighted 25%, Quality "
-        "20%, Growth 15%, Value 15%, Financial Strength 15%, and Capital Allocation "
-        "10%; available weights are renormalized when a group is missing. Lower STA and "
-        "SNOA are better. A company needs a Safety score and at least three total group "
-        "scores. Higher is better except P/E and Debt/Equity, which are reverse-ranked; "
-        "Current Ratio scores by closeness to its sector median."
-    )
     normalization = st.sidebar.selectbox(
-        "Comparison columns",
+        "Advanced comparison columns",
         ["None", "Percentile rank (0–100)", "Z-score"],
     )
 
+    summary_columns = [
+        "Company",
+        "Ticker",
+        "Sector",
+        "Overall Rank",
+        *(
+            ["Sector Rank"]
+            if "Sector Rank" in visible_ranking_columns
+            else []
+        ),
+        "Composite Score",
+        "Accruals and Manipulation Score",
+        "Financial Distress Score",
+        "Value and Franchise Score",
+        "Financial Strength Score",
+        "Recent Operational Improvements Score",
+    ]
     result = screen[
         IDENTIFIER_COLUMNS + visible_ranking_columns + METRIC_COLUMNS
     ].copy()
     if normalization == "Percentile rank (0–100)":
         for metric in selected_metrics or METRIC_COLUMNS:
-            result[f"{metric} Percentile"] = metrics[metric].rank(pct=True) * 100
+            values = pd.to_numeric(metrics[metric], errors="coerce").where(successful)
+            lower_is_better = metric in {"P/E Ratio", "Debt/Equity"}
+            overall_score = values.rank(pct=True, ascending=not lower_is_better) * 100
+            sector_score = values.groupby(
+                metrics["Sector"], dropna=False
+            ).rank(pct=True, ascending=not lower_is_better) * 100
+
+            if metric == "Current Ratio":
+                sector_medians = values.groupby(
+                    metrics["Sector"], dropna=False
+                ).transform("median")
+                sector_relative = -(values - sector_medians).abs()
+                sector_score = sector_relative.groupby(
+                    metrics["Sector"], dropna=False
+                ).rank(pct=True) * 100
+                overall_median = values.median()
+                overall_score = -(values - overall_median).abs()
+                overall_score = overall_score.rank(pct=True) * 100
+
+            result[f"{metric} Sector Percentile"] = sector_score.reindex(result.index)
+            result[f"{metric} Overall Percentile"] = overall_score.reindex(result.index)
     elif normalization == "Z-score":
         for metric in selected_metrics or METRIC_COLUMNS:
             deviation = metrics[metric].std()
@@ -511,7 +611,50 @@ elif section == "Stock Screener":
     result = result.sort_values(
         ["Overall Rank", "Ticker"], kind="stable", na_position="last"
     ).reset_index(drop=True)
-    show_table(result, height=600)
+    summary = result[
+        [column for column in summary_columns if column in result.columns]
+    ]
+
+    summary_tab, full_tab = st.tabs(["Screening summary", "All metrics"])
+    with summary_tab:
+        show_table(summary, height=500)
+    with full_tab:
+        show_table(result, height=500)
+
+    if not result.empty:
+        st.subheader("Selected company")
+        company_options = [
+            f"{row['Ticker']} — {row['Company']}"
+            for _, row in result.iterrows()
+        ]
+        selected_company_label = st.selectbox(
+            "Company",
+            company_options,
+            label_visibility="collapsed",
+        )
+        selected_ticker = selected_company_label.split(" — ", 1)[0]
+        selected_row = result[result["Ticker"].astype(str).eq(selected_ticker)].iloc[0]
+
+        score_items = [
+            ("Accrual/manipulation", "Accruals and Manipulation Score"),
+            ("Financial distress", "Financial Distress Score"),
+            ("Value/franchise", "Value and Franchise Score"),
+            ("Financial strength", "Financial Strength Score"),
+            ("Recent improvements", "Recent Operational Improvements Score"),
+        ]
+        score_columns = st.columns(len(score_items))
+        for column, (label, score_column) in zip(score_columns, score_items):
+            with column:
+                st.metric(label, format_number(selected_row.get(score_column)))
+
+        st.caption("All calculated metrics")
+        show_table(
+            selected_row[["Ticker", "Company", "Sector", *METRIC_COLUMNS]]
+            .to_frame()
+            .T,
+            height=310,
+        )
+
     st.download_button(
         "Download passing screen as CSV",
         data=result.to_csv(index=False, na_rep="").encode("utf-8"),
@@ -520,77 +663,77 @@ elif section == "Stock Screener":
         disabled=result.empty,
     )
 
-    st.subheader("Three-year historical trends")
-    history_tickers = sorted(history["Ticker"].dropna().astype(str).unique())
-    history_companies = (
-        history.drop_duplicates("Ticker").set_index("Ticker")["Company"].fillna("")
-    )
-    controls = st.columns(3)
-    ticker = controls[0].selectbox(
-        "Company",
-        history_tickers,
-        format_func=lambda value: f"{value} — {history_companies.get(value, value)}",
-    )
-    history_metric = controls[1].selectbox("Historical metric", HISTORY_METRICS)
-    comparison_sector = controls[2].selectbox(
-        "Sector comparison",
-        ["No comparison", *sorted(history["Sector"].dropna().astype(str).unique())],
-    )
+    with st.expander("Three-year historical trends", expanded=False):
+        history_tickers = sorted(history["Ticker"].dropna().astype(str).unique())
+        history_companies = (
+            history.drop_duplicates("Ticker").set_index("Ticker")["Company"].fillna("")
+        )
+        controls = st.columns(3)
+        ticker = controls[0].selectbox(
+            "Company",
+            history_tickers,
+            format_func=lambda value: f"{value} — {history_companies.get(value, value)}",
+        )
+        history_metric = controls[1].selectbox("Historical metric", HISTORY_METRICS)
+        comparison_sector = controls[2].selectbox(
+            "Sector comparison",
+            ["No comparison", *sorted(history["Sector"].dropna().astype(str).unique())],
+        )
 
-    company_history = history[history["Ticker"].astype(str).eq(ticker)].sort_values(
-        "Fiscal Year"
-    )
-    chart_history = company_history.dropna(subset=[history_metric])
-    if chart_history.empty:
-        st.info(f"No {history_metric} observations are available for this company.")
-    else:
-        chart_values = chart_history.set_index("Fiscal Year")[[history_metric]].copy()
-        chart_label = history_metric
-        if history_metric in MONETARY_COLUMNS:
-            currency = chart_history["Reporting Currency"].dropna()
-            currency_label = currency.iloc[0] if not currency.empty else "Currency"
-            maximum = chart_values[history_metric].abs().max()
-            divisor, suffix = next(
-                (
-                    (threshold, unit)
-                    for threshold, unit in (
-                        (1_000_000_000_000, "T"),
-                        (1_000_000_000, "B"),
-                        (1_000_000, "M"),
-                        (1_000, "K"),
-                    )
-                    if maximum >= threshold
-                ),
-                (1, ""),
-            )
-            chart_values[history_metric] /= divisor
-            chart_label = f"{history_metric} ({currency_label} {suffix})".strip()
-        st.line_chart(
-            chart_values,
-            x_label="Fiscal year",
-            y_label=chart_label,
+        company_history = history[history["Ticker"].astype(str).eq(ticker)].sort_values(
+            "Fiscal Year"
         )
-        show_table(chart_history[["Fiscal Year", history_metric]].reset_index(drop=True))
+        chart_history = company_history.dropna(subset=[history_metric])
+        if chart_history.empty:
+            st.info(f"No {history_metric} observations are available for this company.")
+        else:
+            chart_values = chart_history.set_index("Fiscal Year")[[history_metric]].copy()
+            chart_label = history_metric
+            if history_metric in MONETARY_COLUMNS:
+                currency = chart_history["Reporting Currency"].dropna()
+                currency_label = currency.iloc[0] if not currency.empty else "Currency"
+                maximum = chart_values[history_metric].abs().max()
+                divisor, suffix = next(
+                    (
+                        (threshold, unit)
+                        for threshold, unit in (
+                            (1_000_000_000_000, "T"),
+                            (1_000_000_000, "B"),
+                            (1_000_000, "M"),
+                            (1_000, "K"),
+                        )
+                        if maximum >= threshold
+                    ),
+                    (1, ""),
+                )
+                chart_values[history_metric] /= divisor
+                chart_label = f"{history_metric} ({currency_label} {suffix})".strip()
+            st.line_chart(
+                chart_values,
+                x_label="Fiscal year",
+                y_label=chart_label,
+            )
+            show_table(chart_history[["Fiscal Year", history_metric]].reset_index(drop=True))
 
-    if comparison_sector != "No comparison":
-        selected_year = company_history["Fiscal Year"].max()
-        peers = history[
-            history["Sector"].eq(comparison_sector)
-            & history["Fiscal Year"].eq(selected_year)
-        ][["Company", "Ticker", "Reporting Currency", history_metric]].dropna(
-            subset=[history_metric]
-        )
-        st.caption(
-            f"Sector comparison for fiscal year {int(selected_year)}. "
-            "Monetary values are kept separate by reporting currency."
-        )
-        for currency, currency_peers in peers.groupby("Reporting Currency", dropna=False):
-            st.markdown(f"**{currency if pd.notna(currency) else 'Currency unavailable'}**")
-            show_table(
-                currency_peers.sort_values(
-                    history_metric, ascending=False, kind="stable"
-                ).reset_index(drop=True)
+        if comparison_sector != "No comparison":
+            selected_year = company_history["Fiscal Year"].max()
+            peers = history[
+                history["Sector"].eq(comparison_sector)
+                & history["Fiscal Year"].eq(selected_year)
+            ][["Company", "Ticker", "Reporting Currency", history_metric]].dropna(
+                subset=[history_metric]
             )
+            st.caption(
+                f"Sector comparison for fiscal year {int(selected_year)}. "
+                "Monetary values are kept separate by reporting currency."
+            )
+            for currency, currency_peers in peers.groupby("Reporting Currency", dropna=False):
+                st.markdown(f"**{currency if pd.notna(currency) else 'Currency unavailable'}**")
+                show_table(
+                    currency_peers.sort_values(
+                        history_metric, ascending=False, kind="stable"
+                    ).reset_index(drop=True)
+                )
 
     st.download_button(
         "Download three-year history as CSV",
@@ -617,6 +760,9 @@ else:
         ("Return on Equity (%)", "Net income ÷ total equity × 100"),
         ("Asset Turnover", "Revenue ÷ total assets"),
         ("Operating Cash Flow / Assets (%)", "Operating cash flow ÷ total assets × 100"),
+        ("FCFTA (%)", "Free cash flow ÷ total assets × 100"),
+        ("EBIT/TEV (%)", "Operating income ÷ enterprise value × 100"),
+        ("ROC (%)", "Operating income ÷ (total debt + total equity − cash) × 100"),
         ("EPS (Basic)", "Net income ÷ basic weighted-average shares"),
         ("Buyback Yield (%)", "(Share repurchases − share issuance) ÷ current market capitalization × 100"),
         ("Net Equity Issuance (%)", "(Share issuance − share repurchases) ÷ current market capitalization × 100"),
@@ -633,14 +779,15 @@ else:
     st.subheader("Ranking")
     st.markdown(
         "Each metric is converted to a sector-relative percentile. Metric percentiles "
-        "are averaged within **Safety**, **Quality**, **Growth**, **Value**, "
-        "**Financial Strength**, and **Capital Allocation**. STA and SNOA are "
-        "reverse-ranked inside Safety because low or negative values indicate better "
-        "earnings quality and operating efficiency. Group weights are Safety 25%, "
-        "Quality 20%, Growth 15%, Value 15%, Financial Strength 15%, and Capital "
-        "Allocation 10%. Available weights are renormalized for missing groups. A "
-        "company needs a Safety score and at least three total group scores. Missing "
-        "values are excluded, not imputed."
+        "are averaged within five equally weighted screening areas: "
+        "**Accruals and Manipulation**, **Financial Distress**, "
+        "**Value and Franchise**, **Financial Strength**, and "
+        "**Recent Operational Improvements**. STA and SNOA are reverse-ranked "
+        "because lower values indicate better accrual quality. Lower P/E and "
+        "Debt/Equity rank better, while EBIT/TEV, ROC, FCFTA, returns, and growth "
+        "rank higher. Available weights are renormalized for missing groups. A "
+        "company needs at least three available group scores; missing values are "
+        "excluded, not imputed."
     )
 
     st.subheader("Calculation policy")
@@ -648,6 +795,8 @@ else:
         """
 - **Missing values:** Missing inputs produce no metric. They display as “—”, are excluded from ranks, and are never replaced with zero or an average.
 - **Invalid denominators:** Ratios are omitted when a denominator is missing, zero, or makes the result meaningless. P/E requires positive earnings; ROE and Debt/Equity require positive book equity.
+- **Outlier guards:** P/E above 1000, EPS or FCF growth above 1000% or below -1000%, ROE above 500% in absolute value, Debt/Equity above 50, Current Ratio above 10, and STA/SNOA above 500% in absolute value are excluded before ranking. These guards prevent one implausible value from dominating a percentile ranking.
+- **New screening metrics:** EBIT/TEV uses operating income divided by enterprise value, using reported enterprise value or market capitalization plus debt minus cash as a fallback. ROC uses operating income divided by debt plus equity minus cash. FCFTA uses free cash flow divided by total assets.
 - **Period alignment:** Calculated metrics use the annual fiscal periods provided by the source. Companies with different fiscal year ends are not pooled into calendar periods.
 - **Currency:** Each row carries the provider-reported reporting currency. Ratios use numerator and denominator from the same company; monetary sector comparisons are grouped by currency.
 - **Share counts:** Basic EPS uses net income divided by reported basic weighted-average shares. Counts are used as supplied; split adjustment by the provider is not independently verified and the app applies no additional adjustment.

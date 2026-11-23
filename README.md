@@ -16,6 +16,17 @@ Each company record carries its reporting currency, calculation timestamp, formu
 version, and a missing restatement flag because the data provider does not expose a
 reliable one. The historical dataset contains up to three fiscal-year observations for
 each company with available statement data.
+The screening framework now includes Accruals and Manipulation (STA/SNOA), Financial
+Distress (Debt/Equity, Current Ratio, operating cash flow/assets), Value and Franchise
+(P/E, EBIT/TEV, ROC, asset turnover), Financial Strength (ROA, gross profitability,
+Debt/Equity, Current Ratio, ROE, FCFTA), and Recent Operational Improvements (EPS growth
+and FCF growth). EBIT/TEV uses operating income divided by enterprise value; ROC uses
+operating income divided by debt plus equity minus cash; FCFTA uses free cash flow divided
+by total assets.
+The bundled metrics can be rebuilt with `python scripts/rebuild_metrics.py`. The rebuild
+requires the cached Yahoo statement records in the session cache. It excludes P/E values
+above 1000, growth values outside -1000% to 1000%, ROE outside -500% to 500%, Debt/Equity
+above 50, Current Ratio above 10, and STA/SNOA outside -500% to 500%.
 Sector filters and peer rankings use the 11 broad GICS sectors from the S&P 500
 constituent list, rather than Yahoo Finance's inconsistent sector/category labels.
 
