@@ -133,7 +133,7 @@ HISTORY_METRICS = [
 MONETARY_COLUMNS = {"Revenue", "Net Income", "Free Cash Flow"}
 FORMULA_VERSION = "1.3.0"
 SNAPSHOT_LABEL = "November 20, 2026"
-DATA_VERSION = "screening-framework-2026-11-22"
+DATA_VERSION = "screening-framework-v1-4-ebit-tev-2026-11-22"
 
 
 st.set_page_config(page_title="S&P 500 Stock Screener", page_icon="📊", layout="wide")
