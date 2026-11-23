@@ -30,6 +30,10 @@ METRIC_COLUMNS = [
     "Current Ratio",
     "EPS Growth (%)",
     "FCF Growth (%)",
+    "EPS Change",
+    "FCF Change",
+    "EPS Change",
+    "FCF Change",
     "STA (%)",
     "SNOA (%)",
 ]
@@ -59,7 +63,12 @@ FILTER_GROUPS = {
         "Return on Equity (%)",
         "FCFTA (%)",
     ],
-    "Recent Operational Improvements": ["EPS Growth (%)", "FCF Growth (%)"],
+    "Recent Operational Improvements": [
+        "EPS Growth (%)",
+        "FCF Growth (%)",
+        "EPS Change",
+        "FCF Change",
+    ],
 }
 RANKING_GROUPS = {
     "Accruals and Manipulation": [
@@ -127,13 +136,15 @@ HISTORY_METRICS = [
     "Current Ratio",
     "EPS Growth (%)",
     "FCF Growth (%)",
+    "EPS Change",
+    "FCF Change",
     "STA (%)",
     "SNOA (%)",
 ]
-MONETARY_COLUMNS = {"Revenue", "Net Income", "Free Cash Flow"}
-FORMULA_VERSION = "1.3.0"
+MONETARY_COLUMNS = {"Revenue", "Net Income", "Free Cash Flow", "FCF Change"}
+FORMULA_VERSION = "1.5.0"
 SNAPSHOT_LABEL = "November 20, 2026"
-DATA_VERSION = "screening-framework-v1-4-ebit-tev-2026-11-22"
+DATA_VERSION = "screening-validity-v1-5-2026-11-22"
 
 
 st.set_page_config(page_title="S&P 500 Stock Screener", page_icon="📊", layout="wide")
@@ -208,6 +219,14 @@ def add_rankings(data: pd.DataFrame) -> pd.DataFrame:
                 values = values.where(values.abs() <= 500)
             if metric == "EBIT/TEV (%)":
                 values = values.where(values.abs() <= 500)
+            if metric == "SNOA (%)":
+                lower = values.groupby(ranked["Sector"], dropna=False).transform(
+                    lambda series: series.quantile(0.01)
+                )
+                upper = values.groupby(ranked["Sector"], dropna=False).transform(
+                    lambda series: series.quantile(0.99)
+                )
+                values = values.clip(lower=lower, upper=upper)
 
             if direction == "sector_median":
                 sector_medians = values.groupby(
@@ -771,6 +790,8 @@ else:
         ("Current Ratio", "Current assets ÷ current liabilities"),
         ("EPS Growth (%)", "(Current annual EPS − prior annual EPS) ÷ absolute prior annual EPS × 100"),
         ("FCF Growth (%)", "(Current annual free cash flow − prior annual free cash flow) ÷ absolute prior annual free cash flow × 100"),
+        ("EPS Change", "Current annual EPS − prior annual EPS"),
+        ("FCF Change", "Current annual free cash flow − prior annual free cash flow"),
         ("STA (%)", "(Net income − operating cash flow) ÷ total assets × 100"),
         ("SNOA (%)", "(Total debt + total equity − cash and short-term investments) ÷ prior-year total assets × 100"),
     ]
@@ -795,7 +816,9 @@ else:
         """
 - **Missing values:** Missing inputs produce no metric. They display as “—”, are excluded from ranks, and are never replaced with zero or an average.
 - **Invalid denominators:** Ratios are omitted when a denominator is missing, zero, or makes the result meaningless. P/E requires positive earnings; ROE and Debt/Equity require positive book equity.
-- **Outlier guards:** P/E above 1000, EPS or FCF growth above 1000% or below -1000%, ROE above 500% in absolute value, Debt/Equity above 50, Current Ratio above 10, and STA/SNOA above 500% in absolute value are excluded before ranking. These guards prevent one implausible value from dominating a percentile ranking.
+- **Outlier guards:** P/E above 1000, EPS or FCF growth above 1000% or below -1000%, ROC or ROE above 500% in absolute value, Debt/Equity above 50, and Current Ratio above 10 are excluded. EPS and FCF percentage growth are missing when prior-year values are zero or negative.
+- **Invalid growth:** EPS and FCF percentage growth are missing when prior-year EPS or FCF is zero or negative.
+- **Ranking winsorization:** SNOA keeps its raw reported value. Ranking clips sector-relative SNOA values at the 1st and 99th percentiles.
 - **New screening metrics:** EBIT/TEV uses operating income divided by enterprise value, using reported enterprise value or market capitalization plus debt minus cash as a fallback. ROC uses operating income divided by debt plus equity minus cash. FCFTA uses free cash flow divided by total assets.
 - **Period alignment:** Calculated metrics use the annual fiscal periods provided by the source. Companies with different fiscal year ends are not pooled into calendar periods.
 - **Currency:** Each row carries the provider-reported reporting currency. Ratios use numerator and denominator from the same company; monetary sector comparisons are grouped by currency.

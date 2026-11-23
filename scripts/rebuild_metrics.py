@@ -18,7 +18,7 @@ UNIVERSE_FILE = Path(
 )
 OUTPUT_SNAPSHOT = ROOT / "sp500_all_company_metrics.csv"
 OUTPUT_HISTORY = ROOT / "sp500_three_year_historical_metrics.csv"
-FORMULA_VERSION = "1.3.0"
+FORMULA_VERSION = "1.5.0"
 
 
 def statement(frame):
@@ -65,6 +65,8 @@ def safe_div(numerator, denominator):
 
 def growth(current, prior, minimum_prior=0.01, maximum=1000.0):
     if pd.isna(current) or pd.isna(prior):
+        return np.nan
+    if float(prior) <= 0:
         return np.nan
     if abs(float(prior)) < minimum_prior:
         return np.nan
@@ -151,6 +153,16 @@ def calculate(ticker, record, universe_row=None):
     capex_prior = get_value(cashflow, ["Capital Expenditure", "Capital Expenditures"], 1)
     fcf = cfo + capex if not pd.isna(cfo) and not pd.isna(capex) else np.nan
     fcf_prior = cfo_prior + capex_prior if not pd.isna(cfo_prior) and not pd.isna(capex_prior) else np.nan
+    eps_change = (
+        eps - eps_prior
+        if not pd.isna(eps) and not pd.isna(eps_prior)
+        else np.nan
+    )
+    fcf_change = (
+        fcf - fcf_prior
+        if not pd.isna(fcf) and not pd.isna(fcf_prior)
+        else np.nan
+    )
 
     repurchases = get_value(cashflow, ["Repurchase Of Capital Stock", "Repurchase Of Stock"])
     issuance = get_value(cashflow, ["Common Stock Issuance", "Issuance Of Capital Stock",
@@ -182,7 +194,10 @@ def calculate(ticker, record, universe_row=None):
         if not any(pd.isna(value) for value in [total_debt, equity, cash])
         else np.nan
     )
-    roc = safe_div(operating_income, positive(invested_capital)) * 100
+    invested_capital = positive(invested_capital)
+    roc = safe_div(operating_income, invested_capital) * 100
+    if not pd.isna(roc) and abs(float(roc)) > 500:
+        roc = np.nan
     fcfta = safe_div(fcf, positive(total_assets)) * 100
 
     price = info.get("currentPrice", info.get("regularMarketPrice", np.nan))
@@ -203,8 +218,6 @@ def calculate(ticker, record, universe_row=None):
         else np.nan
     )
     snoa = safe_div(snoa_numerator, positive(prior_assets)) * 100
-    if not pd.isna(snoa) and abs(float(snoa)) > 500:
-        snoa = np.nan
     fcfta = safe_div(fcf, positive(total_assets)) * 100
     roe = safe_div(net_income, positive(equity)) * 100
     if not pd.isna(roe) and abs(float(roe)) > 500:
@@ -264,6 +277,8 @@ def calculate(ticker, record, universe_row=None):
         "Current Ratio": current_ratio,
         "EPS Growth (%)": growth(eps, eps_prior, minimum_prior=0.10),
         "FCF Growth (%)": growth(fcf, fcf_prior, minimum_prior=1_000_000),
+        "EPS Change": eps_change,
+        "FCF Change": fcf_change,
         "STA (%)": sta,
         "SNOA (%)": snoa,
     }
@@ -405,6 +420,8 @@ def main():
                                              "Total Cash From Operating Activities"], column + 1)
             capex_prior = get_value(cashflow, ["Capital Expenditure", "Capital Expenditures"], column + 1)
             fcf_prior = cfo_prior + capex_prior if not pd.isna(cfo_prior) and not pd.isna(capex_prior) else np.nan
+            eps_change = eps - eps_prior if not pd.isna(eps) and not pd.isna(eps_prior) else np.nan
+            fcf_change = fcf - fcf_prior if not pd.isna(fcf) and not pd.isna(fcf_prior) else np.nan
 
             sta = safe_div(net_income - cfo, positive(assets)) * 100 if not pd.isna(net_income) and not pd.isna(cfo) else np.nan
             if not pd.isna(sta) and abs(float(sta)) > 500:
@@ -415,8 +432,6 @@ def main():
                 else np.nan
             )
             snoa = safe_div(snoa_numerator, positive(prior_assets)) * 100
-            if not pd.isna(snoa) and abs(float(snoa)) > 500:
-                snoa = np.nan
             roe = safe_div(net_income, positive(equity)) * 100
             if not pd.isna(roe) and abs(float(roe)) > 500:
                 roe = np.nan
