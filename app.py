@@ -100,6 +100,14 @@ RANKING_WEIGHTS = {
     "Financial Strength": 0.20,
     "Recent Operational Improvements": 0.20,
 }
+SCORE_EXPLANATIONS = {
+    "Composite Score": "Average of the available screening group scores; each group has an equal 20% weight.",
+    "Accruals and Manipulation Score": "Average of sector percentiles for STA and SNOA. Lower values score better.",
+    "Financial Distress Score": "Average of lower-is-better Debt/Equity, Current Ratio near the sector median, and higher Operating Cash Flow/Assets.",
+    "Value and Franchise Score": "Average of lower P/E, plus higher EBIT/TEV, ROC, and Asset Turnover.",
+    "Financial Strength Score": "Average of ROA, Gross Profitability, lower Debt/Equity, median-relative Current Ratio, ROE, and FCFTA.",
+    "Recent Operational Improvements Score": "Average of sector percentiles for positive EPS Growth and FCF Growth.",
+}
 RANKING_COLUMNS = [
     "Overall Rank",
     "Sector Rank",
@@ -414,6 +422,9 @@ if section == "Overview":
         "operational improvements. "
         "Missing values are excluded and missing weights are renormalized."
     )
+    with st.expander("How the scores work", expanded=False):
+        for score_name, explanation in SCORE_EXPLANATIONS.items():
+            st.markdown(f"**{score_name}:** {explanation}")
     st.subheader("Top companies")
     top_screen = screen.dropna(subset=["Overall Rank"]).sort_values(
         ["Overall Rank", "Ticker"], kind="stable"
@@ -588,6 +599,9 @@ if section == "Overview":
 elif section == "Stock Screener":
     st.header("Stock Screener")
     st.caption(f"{len(screen):,} of {len(metrics):,} companies pass the active filters.")
+    with st.expander("How the scores work", expanded=False):
+        for score_name, explanation in SCORE_EXPLANATIONS.items():
+            st.markdown(f"**{score_name}:** {explanation}")
     normalization = st.sidebar.selectbox(
         "Advanced comparison columns",
         ["None", "Percentile rank (0–100)", "Z-score"],
@@ -827,6 +841,9 @@ else:
         "company needs at least three available group scores; missing values are "
         "excluded, not imputed."
     )
+    with st.expander("Score explanations", expanded=False):
+        for score_name, explanation in SCORE_EXPLANATIONS.items():
+            st.markdown(f"**{score_name}:** {explanation}")
 
     st.subheader("Calculation policy")
     st.markdown(
