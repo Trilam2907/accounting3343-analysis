@@ -30,10 +30,6 @@ METRIC_COLUMNS = [
     "Current Ratio",
     "EPS Growth (%)",
     "FCF Growth (%)",
-    "EPS Change",
-    "FCF Change",
-    "EPS Change",
-    "FCF Change",
     "STA (%)",
     "SNOA (%)",
 ]
@@ -66,8 +62,6 @@ FILTER_GROUPS = {
     "Recent Operational Improvements": [
         "EPS Growth (%)",
         "FCF Growth (%)",
-        "EPS Change",
-        "FCF Change",
     ],
 }
 RANKING_GROUPS = {
@@ -136,15 +130,13 @@ HISTORY_METRICS = [
     "Current Ratio",
     "EPS Growth (%)",
     "FCF Growth (%)",
-    "EPS Change",
-    "FCF Change",
     "STA (%)",
     "SNOA (%)",
 ]
-MONETARY_COLUMNS = {"Revenue", "Net Income", "Free Cash Flow", "FCF Change"}
-FORMULA_VERSION = "1.5.0"
+MONETARY_COLUMNS = {"Revenue", "Net Income", "Free Cash Flow"}
+FORMULA_VERSION = "1.6.0"
 SNAPSHOT_LABEL = "November 20, 2026"
-DATA_VERSION = "screening-validity-v1-5-2026-11-22"
+DATA_VERSION = "screening-validity-v1-6-2026-11-22"
 
 
 st.set_page_config(page_title="S&P 500 Stock Screener", page_icon="📊", layout="wide")
@@ -790,8 +782,6 @@ else:
         ("Current Ratio", "Current assets ÷ current liabilities"),
         ("EPS Growth (%)", "(Current annual EPS − prior annual EPS) ÷ absolute prior annual EPS × 100"),
         ("FCF Growth (%)", "(Current annual free cash flow − prior annual free cash flow) ÷ absolute prior annual free cash flow × 100"),
-        ("EPS Change", "Current annual EPS − prior annual EPS"),
-        ("FCF Change", "Current annual free cash flow − prior annual free cash flow"),
         ("STA (%)", "(Net income − operating cash flow) ÷ total assets × 100"),
         ("SNOA (%)", "(Total debt + total equity − cash and short-term investments) ÷ prior-year total assets × 100"),
     ]

@@ -18,7 +18,7 @@ UNIVERSE_FILE = Path(
 )
 OUTPUT_SNAPSHOT = ROOT / "sp500_all_company_metrics.csv"
 OUTPUT_HISTORY = ROOT / "sp500_three_year_historical_metrics.csv"
-FORMULA_VERSION = "1.5.0"
+FORMULA_VERSION = "1.6.0"
 
 
 def statement(frame):
@@ -153,16 +153,6 @@ def calculate(ticker, record, universe_row=None):
     capex_prior = get_value(cashflow, ["Capital Expenditure", "Capital Expenditures"], 1)
     fcf = cfo + capex if not pd.isna(cfo) and not pd.isna(capex) else np.nan
     fcf_prior = cfo_prior + capex_prior if not pd.isna(cfo_prior) and not pd.isna(capex_prior) else np.nan
-    eps_change = (
-        eps - eps_prior
-        if not pd.isna(eps) and not pd.isna(eps_prior)
-        else np.nan
-    )
-    fcf_change = (
-        fcf - fcf_prior
-        if not pd.isna(fcf) and not pd.isna(fcf_prior)
-        else np.nan
-    )
 
     repurchases = get_value(cashflow, ["Repurchase Of Capital Stock", "Repurchase Of Stock"])
     issuance = get_value(cashflow, ["Common Stock Issuance", "Issuance Of Capital Stock",
@@ -277,8 +267,6 @@ def calculate(ticker, record, universe_row=None):
         "Current Ratio": current_ratio,
         "EPS Growth (%)": growth(eps, eps_prior, minimum_prior=0.10),
         "FCF Growth (%)": growth(fcf, fcf_prior, minimum_prior=1_000_000),
-        "EPS Change": eps_change,
-        "FCF Change": fcf_change,
         "STA (%)": sta,
         "SNOA (%)": snoa,
     }
@@ -420,8 +408,6 @@ def main():
                                              "Total Cash From Operating Activities"], column + 1)
             capex_prior = get_value(cashflow, ["Capital Expenditure", "Capital Expenditures"], column + 1)
             fcf_prior = cfo_prior + capex_prior if not pd.isna(cfo_prior) and not pd.isna(capex_prior) else np.nan
-            eps_change = eps - eps_prior if not pd.isna(eps) and not pd.isna(eps_prior) else np.nan
-            fcf_change = fcf - fcf_prior if not pd.isna(fcf) and not pd.isna(fcf_prior) else np.nan
 
             sta = safe_div(net_income - cfo, positive(assets)) * 100 if not pd.isna(net_income) and not pd.isna(cfo) else np.nan
             if not pd.isna(sta) and abs(float(sta)) > 500:
