@@ -457,7 +457,34 @@ if section == "Overview":
             "All companies and calculated metrics in the bundled snapshot, including "
             "incomplete-download rows. Missing values appear as —."
         )
-        show_table(metrics)
+        complete_columns = [
+            "Overall Rank",
+            "Sector Rank",
+            "Composite Score",
+            *[f"{group} Score" for group in RANKING_GROUPS],
+            "Company",
+            "Ticker",
+            "Sector",
+            "Reporting Currency",
+            *[
+                column
+                for column in METRIC_COLUMNS
+                if column not in {"Company", "Ticker", "Sector", "Reporting Currency"}
+            ],
+            *METADATA_COLUMNS,
+            STATUS_COLUMN,
+        ]
+        complete_columns = [
+            column for column in complete_columns if column in metrics.columns
+        ]
+        complete_data = metrics[
+            complete_columns
+        ].sort_values(
+            ["Overall Rank", "Ticker"],
+            kind="stable",
+            na_position="last",
+        )
+        show_table(complete_data)
 
     with st.expander("Metric distributions", expanded=False):
         st.caption(
