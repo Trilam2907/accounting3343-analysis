@@ -493,67 +493,6 @@ if section == "Overview":
         )
         show_table(complete_data)
 
-    with st.expander("Metric distributions", expanded=False):
-        st.caption(
-            "Histograms show the distribution among companies with successful downloads. "
-            "Missing values are reported for each metric and are not treated as zero."
-        )
-        distribution_groups = {
-        "Profitability and returns": [
-            "Gross Profitability",
-            "Gross Margin (%)",
-            "Operating Margin (%)",
-            "EBITDA Margin (%)",
-            "Net Profit Margin (%)",
-            "Return on Assets (%)",
-            "Return on Equity (%)",
-            "Asset Turnover",
-            "Operating Cash Flow / Assets (%)",
-        ],
-        "Valuation and capital allocation": [
-            "EPS (Basic)",
-            "Buyback Yield (%)",
-            "Net Equity Issuance (%)",
-            "P/E Ratio",
-            "EBIT/TEV (%)",
-            "ROC (%)",
-        ],
-        "Financial strength": ["Debt/Equity", "Current Ratio", "FCFTA (%)"],
-        "Growth and accounting": [
-            "EPS Growth (%)",
-            "FCF Growth (%)",
-            "STA (%)",
-            "SNOA (%)",
-        ],
-        }
-        for group_name, group_metrics in distribution_groups.items():
-            with st.expander(group_name, expanded=False):
-                for start in range(0, len(group_metrics), 2):
-                    chart_columns = st.columns(2)
-                    for column, metric in zip(chart_columns, group_metrics[start : start + 2]):
-                        values = metrics.loc[successful, metric].dropna()
-                        missing_count = int(successful.sum() - len(values))
-                        with column:
-                            st.markdown(f"**{metric}**")
-                            st.caption(
-                                f"{len(values):,} available · {missing_count:,} missing"
-                            )
-                            if values.empty:
-                                st.info("No values available.")
-                                continue
-                            counts, edges = np.histogram(values, bins=min(20, max(1, len(values))))
-                            centers = np.round((edges[:-1] + edges[1:]) / 2, 2)
-                            chart = pd.DataFrame(
-                                {"Companies": counts},
-                                index=pd.Index(centers, name=metric),
-                            )
-                            st.bar_chart(
-                                chart,
-                                x_label=metric,
-                                y_label="Companies",
-                                height=220,
-                            )
-
     st.subheader("Metric relationship explorer")
     st.caption(
         "Choose a metric for each axis to compare companies with successful downloads. "
