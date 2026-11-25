@@ -11,21 +11,23 @@ streamlit run app.py
 
 The app reads `sp500_all_company_metrics.csv` and
 `sp500_three_year_historical_metrics.csv` from the repository. These bundled datasets
-are snapshots generated on November 20, 2026; they are not refreshed automatically.
+are snapshots generated on November 24, 2026; they are not refreshed automatically.
 Each company record carries its reporting currency, calculation timestamp, formula
 version, and a missing restatement flag because the data provider does not expose a
 reliable one. The historical dataset contains up to three fiscal-year observations for
 each company with available statement data.
-The screening framework now includes Accruals and Manipulation (STA/SNOA), Financial
+The screening framework includes Accruals and Manipulation (STA/SNOA), Financial
 Distress (Debt/Equity, Current Ratio, operating cash flow/assets), Value and Franchise
 (P/E, EBIT/TEV, ROC, asset turnover), Financial Strength (ROA, gross profitability,
-Debt/Equity, Current Ratio, ROE, FCFTA), and Recent Operational Improvements (EPS growth
-and FCF growth). EBIT/TEV uses operating income divided by enterprise value; ROC uses
-operating income divided by debt plus equity minus cash; FCFTA uses free cash flow divided
-by total assets.
+Current Ratio, ROE), and Recent Operational Improvements (EPS and FCF annual growth
+and CAGR). Debt/Equity remains in Financial Distress, not Financial Strength.
+EPS and FCF CAGRs use the earliest and latest available positive annual values in the
+three-year history, annualized over the fiscal-year span. EBIT/TEV uses operating income
+divided by enterprise value; ROC uses operating income divided by debt plus equity minus
+cash.
 The bundled metrics can be rebuilt with `python scripts/rebuild_metrics.py`. The rebuild
 requires the cached Yahoo statement records in the session cache. It excludes P/E values
-above 1000, growth values outside -1000% to 1000%, ROE outside -500% to 500%, Debt/Equity
+above 1000, growth and CAGR values above 1000%, ROE outside -500% to 500%, Debt/Equity
 above 50, Current Ratio above 10, and STA/SNOA outside -500% to 500%.
 Sector filters and peer rankings use the 11 broad GICS sectors from the S&P 500
 constituent list, rather than Yahoo Finance's inconsistent sector/category labels.
@@ -36,14 +38,10 @@ calculation policy, and data-quality coverage. The supplied metric list included
 a subset of the referenced 97 definitions; unprovided definitions are not inferred or
 presented as implemented.
 
-Company rankings use sector-relative metric percentiles averaged into Safety, Quality,
-Growth, Value, Financial Strength, and Capital Allocation groups. Safety is weighted
-25%, Quality 20%, Growth 15%, Value 15%, Financial Strength 15%, and Capital Allocation
-10%; weights for missing groups are renormalized across available groups. A company needs
-a Safety score and at least three available group scores; missing metrics are not imputed.
-Lower STA and SNOA values rank better. Return on Equity and Asset Turnover are included in
-Quality. Current Ratio is scored by closeness to its sector median, and Net Equity
-Issuance is excluded from the composite because it is the inverse of Buyback Yield.
+Company rankings use sector-relative metric percentiles averaged into five equally
+weighted groups. Weights for missing groups are renormalized across available groups; a
+company needs at least three available group scores. Missing metrics are not imputed.
+Current Ratio is scored by closeness to its sector median.
 
 ## Deploy to Streamlit Community Cloud
 

@@ -19,7 +19,6 @@ METRIC_COLUMNS = [
     "Return on Equity (%)",
     "Asset Turnover",
     "Operating Cash Flow / Assets (%)",
-    "FCFTA (%)",
     "EBIT/TEV (%)",
     "ROC (%)",
     "EPS (Basic)",
@@ -30,6 +29,8 @@ METRIC_COLUMNS = [
     "Current Ratio",
     "EPS Growth (%)",
     "FCF Growth (%)",
+    "EPS CAGR (%)",
+    "FCF CAGR (%)",
     "STA (%)",
     "SNOA (%)",
 ]
@@ -54,14 +55,14 @@ FILTER_GROUPS = {
     "Financial Strength": [
         "Return on Assets (%)",
         "Gross Profitability",
-        "Debt/Equity",
         "Current Ratio",
         "Return on Equity (%)",
-        "FCFTA (%)",
     ],
     "Recent Operational Improvements": [
         "EPS Growth (%)",
         "FCF Growth (%)",
+        "EPS CAGR (%)",
+        "FCF CAGR (%)",
     ],
 }
 RANKING_GROUPS = {
@@ -83,14 +84,14 @@ RANKING_GROUPS = {
     "Financial Strength": [
         ("Return on Assets (%)", True),
         ("Gross Profitability", True),
-        ("Debt/Equity", False),
         ("Current Ratio", "sector_median"),
         ("Return on Equity (%)", True),
-        ("FCFTA (%)", True),
     ],
     "Recent Operational Improvements": [
         ("EPS Growth (%)", True),
         ("FCF Growth (%)", True),
+        ("EPS CAGR (%)", True),
+        ("FCF CAGR (%)", True),
     ],
 }
 RANKING_WEIGHTS = {
@@ -105,8 +106,8 @@ SCORE_EXPLANATIONS = {
     "Accruals and Manipulation Score": "Average of sector percentiles for STA and SNOA. Lower values score better.",
     "Financial Distress Score": "Average of lower-is-better Debt/Equity, Current Ratio near the sector median, and higher Operating Cash Flow/Assets.",
     "Value and Franchise Score": "Average of lower P/E, plus higher EBIT/TEV, ROC, and Asset Turnover.",
-    "Financial Strength Score": "Average of ROA, Gross Profitability, lower Debt/Equity, median-relative Current Ratio, ROE, and FCFTA.",
-    "Recent Operational Improvements Score": "Average of sector percentiles for positive EPS Growth and FCF Growth.",
+    "Financial Strength Score": "Average of ROA, Gross Profitability, median-relative Current Ratio, and ROE.",
+    "Recent Operational Improvements Score": "Average of sector percentiles for EPS Growth, FCF Growth, EPS CAGR, and FCF CAGR.",
 }
 RANKING_COLUMNS = [
     "Overall Rank",
@@ -132,7 +133,6 @@ HISTORY_METRICS = [
     "Return on Assets (%)",
     "Return on Equity (%)",
     "Operating Cash Flow / Assets (%)",
-    "FCFTA (%)",
     "Asset Turnover",
     "Debt/Equity",
     "Current Ratio",
@@ -142,9 +142,9 @@ HISTORY_METRICS = [
     "SNOA (%)",
 ]
 MONETARY_COLUMNS = {"Revenue", "Net Income", "Free Cash Flow"}
-FORMULA_VERSION = "1.6.0"
-SNAPSHOT_LABEL = "November 20, 2026"
-DATA_VERSION = "screening-validity-v1-6-2026-11-22"
+FORMULA_VERSION = "1.7.0"
+SNAPSHOT_LABEL = "November 24, 2026"
+DATA_VERSION = "screening-cagr-v1-7-2026-11-24"
 
 
 st.set_page_config(page_title="S&P 500 Stock Screener", page_icon="📊", layout="wide")
@@ -215,8 +215,10 @@ def add_rankings(data: pd.DataFrame) -> pd.DataFrame:
                 values = values.where(values <= 10)
             if metric == "Return on Equity (%)":
                 values = values.where(values.abs() <= 500)
-            if metric in {"ROC (%)", "FCFTA (%)"}:
+            if metric == "ROC (%)":
                 values = values.where(values.abs() <= 500)
+            if metric in {"EPS Growth (%)", "FCF Growth (%)", "EPS CAGR (%)", "FCF CAGR (%)"}:
+                values = values.where(values.between(-1000, 1000))
             if metric == "EBIT/TEV (%)":
                 values = values.where(values.abs() <= 500)
             if metric == "SNOA (%)":
@@ -747,7 +749,6 @@ else:
         ("Return on Equity (%)", "Net income ÷ total equity × 100"),
         ("Asset Turnover", "Revenue ÷ total assets"),
         ("Operating Cash Flow / Assets (%)", "Operating cash flow ÷ total assets × 100"),
-        ("FCFTA (%)", "Free cash flow ÷ total assets × 100"),
         ("EBIT/TEV (%)", "Operating income ÷ enterprise value × 100"),
         ("ROC (%)", "Operating income ÷ (total debt + total equity − cash) × 100"),
         ("EPS (Basic)", "Net income ÷ basic weighted-average shares"),
@@ -758,6 +759,8 @@ else:
         ("Current Ratio", "Current assets ÷ current liabilities"),
         ("EPS Growth (%)", "(Current annual EPS − prior annual EPS) ÷ absolute prior annual EPS × 100"),
         ("FCF Growth (%)", "(Current annual free cash flow − prior annual free cash flow) ÷ absolute prior annual free cash flow × 100"),
+        ("EPS CAGR (%)", "Annualized change from earliest to latest available positive annual EPS over the covered fiscal years"),
+        ("FCF CAGR (%)", "Annualized change from earliest to latest available positive annual free cash flow over the covered fiscal years"),
         ("STA (%)", "(Net income − operating cash flow) ÷ total assets × 100"),
         ("SNOA (%)", "(Total debt + total equity − cash and short-term investments) ÷ prior-year total assets × 100"),
     ]
@@ -771,7 +774,7 @@ else:
         "**Value and Franchise**, **Financial Strength**, and "
         "**Recent Operational Improvements**. STA and SNOA are reverse-ranked "
         "because lower values indicate better accrual quality. Lower P/E and "
-        "Debt/Equity rank better, while EBIT/TEV, ROC, FCFTA, returns, and growth "
+        "Debt/Equity rank better, while EBIT/TEV, ROC, returns, and growth "
         "rank higher. Available weights are renormalized for missing groups. A "
         "company needs at least three available group scores; missing values are "
         "excluded, not imputed."
@@ -785,10 +788,11 @@ else:
         """
 - **Missing values:** Missing inputs produce no metric. They display as “—”, are excluded from ranks, and are never replaced with zero or an average.
 - **Invalid denominators:** Ratios are omitted when a denominator is missing, zero, or makes the result meaningless. P/E requires positive earnings; ROE and Debt/Equity require positive book equity.
-- **Outlier guards:** P/E above 1000, EPS or FCF growth above 1000% or below -1000%, ROC or ROE above 500% in absolute value, Debt/Equity above 50, and Current Ratio above 10 are excluded. EPS and FCF percentage growth are missing when prior-year values are zero or negative.
+- **Outlier guards:** P/E above 1000, EPS or FCF growth/CAGR above 1000% or below -1000%, ROC or ROE above 500% in absolute value, Debt/Equity above 50, and Current Ratio above 10 are excluded. EPS and FCF percentage growth are missing when prior-year values are zero or negative.
 - **Invalid growth:** EPS and FCF percentage growth are missing when prior-year EPS or FCF is zero or negative.
 - **Ranking winsorization:** SNOA keeps its raw reported value. Ranking clips sector-relative SNOA values at the 1st and 99th percentiles.
-- **New screening metrics:** EBIT/TEV uses operating income divided by enterprise value, using reported enterprise value or market capitalization plus debt minus cash as a fallback. ROC uses operating income divided by debt plus equity minus cash. FCFTA uses free cash flow divided by total assets.
+- **New screening metrics:** EBIT/TEV uses operating income divided by enterprise value, using reported enterprise value or market capitalization plus debt minus cash as a fallback. ROC uses operating income divided by debt plus equity minus cash.
+- **CAGR:** EPS and free-cash-flow CAGRs use the earliest and latest available annual values in the three-year history. Both endpoints must be positive; the number of elapsed fiscal years is used to annualize growth.
 - **Period alignment:** Calculated metrics use the annual fiscal periods provided by the source. Companies with different fiscal year ends are not pooled into calendar periods.
 - **Currency:** Each row carries the provider-reported reporting currency. Ratios use numerator and denominator from the same company; monetary sector comparisons are grouped by currency.
 - **Share counts:** Basic EPS uses net income divided by reported basic weighted-average shares. Counts are used as supplied; split adjustment by the provider is not independently verified and the app applies no additional adjustment.

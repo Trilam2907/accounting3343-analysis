@@ -18,7 +18,7 @@ UNIVERSE_FILE = Path(
 )
 OUTPUT_SNAPSHOT = ROOT / "sp500_all_company_metrics.csv"
 OUTPUT_HISTORY = ROOT / "sp500_three_year_historical_metrics.csv"
-FORMULA_VERSION = "1.6.0"
+FORMULA_VERSION = "1.7.0"
 
 
 def statement(frame):
@@ -76,6 +76,44 @@ def growth(current, prior, minimum_prior=0.01, maximum=1000.0):
     return value
 
 
+def cagr(current, initial, years, minimum_initial=0.01, maximum=1000.0):
+    if pd.isna(current) or pd.isna(initial) or pd.isna(years):
+        return np.nan
+    if float(current) <= 0 or float(initial) < minimum_initial or float(years) <= 0:
+        return np.nan
+    value = ((float(current) / float(initial)) ** (1 / float(years)) - 1) * 100
+    if not np.isfinite(value) or value > maximum:
+        return np.nan
+    return value
+
+
+def period_years(frame, earlier_column):
+    if frame is None or frame.empty or frame.shape[1] <= earlier_column:
+        return np.nan
+    try:
+        latest_year = pd.Timestamp(frame.columns[0]).year
+        earlier_year = pd.Timestamp(frame.columns[earlier_column]).year
+        return latest_year - earlier_year
+    except (TypeError, ValueError):
+        return np.nan
+
+
+def cagr_from_periods(frame, values, minimum_initial):
+    if len(values) < 2 or pd.isna(values[0]) or float(values[0]) <= 0:
+        return np.nan
+    for earlier_column in range(min(3, len(values)) - 1, 0, -1):
+        initial = values[earlier_column]
+        if pd.isna(initial) or float(initial) < minimum_initial:
+            continue
+        return cagr(
+            values[0],
+            initial,
+            period_years(frame, earlier_column),
+            minimum_initial=minimum_initial,
+        )
+    return np.nan
+
+
 def positive(value):
     return value if not pd.isna(value) and float(value) > 0 else np.nan
 
@@ -123,6 +161,19 @@ def calculate(ticker, record, universe_row=None):
         if not pd.isna(net_income_prior)
         else np.nan
     )
+    eps_observations = [
+        safe_div(
+            get_value(
+                income,
+                ["Net Income", "Net Income Common Stockholders",
+                 "Net Income From Continuing Operations"],
+                column,
+            ),
+            positive(get_value(income, ["Basic Average Shares"], column)),
+        )
+        for column in range(min(3, income.shape[1]))
+    ]
+    eps_cagr = cagr_from_periods(income, eps_observations, minimum_initial=0.10)
 
     total_assets = get_value(balance, ["Total Assets"])
     prior_assets = get_value(balance, ["Total Assets"], 1)
@@ -153,6 +204,27 @@ def calculate(ticker, record, universe_row=None):
     capex_prior = get_value(cashflow, ["Capital Expenditure", "Capital Expenditures"], 1)
     fcf = cfo + capex if not pd.isna(cfo) and not pd.isna(capex) else np.nan
     fcf_prior = cfo_prior + capex_prior if not pd.isna(cfo_prior) and not pd.isna(capex_prior) else np.nan
+    fcf_observations = []
+    for column in range(min(3, cashflow.shape[1])):
+        cfo_value = get_value(
+            cashflow,
+            ["Operating Cash Flow", "Cash Flow From Continuing Operating Activities",
+             "Total Cash From Operating Activities"],
+            column,
+        )
+        capex_value = get_value(
+            cashflow,
+            ["Capital Expenditure", "Capital Expenditures"],
+            column,
+        )
+        fcf_observations.append(
+            cfo_value + capex_value
+            if not pd.isna(cfo_value) and not pd.isna(capex_value)
+            else np.nan
+        )
+    fcf_cagr = cagr_from_periods(
+        cashflow, fcf_observations, minimum_initial=1_000_000
+    )
 
     repurchases = get_value(cashflow, ["Repurchase Of Capital Stock", "Repurchase Of Stock"])
     issuance = get_value(cashflow, ["Common Stock Issuance", "Issuance Of Capital Stock",
@@ -188,8 +260,6 @@ def calculate(ticker, record, universe_row=None):
     roc = safe_div(operating_income, invested_capital) * 100
     if not pd.isna(roc) and abs(float(roc)) > 500:
         roc = np.nan
-    fcfta = safe_div(fcf, positive(total_assets)) * 100
-
     price = info.get("currentPrice", info.get("regularMarketPrice", np.nan))
     trailing_eps = info.get("trailingEps", np.nan)
     pe = info.get("trailingPE", np.nan)
@@ -208,17 +278,6 @@ def calculate(ticker, record, universe_row=None):
         else np.nan
     )
     snoa = safe_div(snoa_numerator, positive(prior_assets)) * 100
-    fcfta = safe_div(fcf, positive(total_assets)) * 100
-    roe = safe_div(net_income, positive(equity)) * 100
-    if not pd.isna(roe) and abs(float(roe)) > 500:
-        roe = np.nan
-    debt_to_equity = safe_div(total_debt, positive(equity))
-    if not pd.isna(debt_to_equity) and float(debt_to_equity) > 50:
-        debt_to_equity = np.nan
-    current_ratio = safe_div(positive(current_assets), positive(current_liabilities))
-    if not pd.isna(current_ratio) and float(current_ratio) > 10:
-        current_ratio = np.nan
-
     roe = safe_div(net_income, positive(equity)) * 100
     if not pd.isna(roe) and abs(float(roe)) > 500:
         roe = np.nan
@@ -252,7 +311,6 @@ def calculate(ticker, record, universe_row=None):
         "Return on Equity (%)": roe,
         "Asset Turnover": safe_div(revenue, positive(total_assets)),
         "Operating Cash Flow / Assets (%)": safe_div(cfo, positive(total_assets)) * 100,
-        "FCFTA (%)": fcfta,
         "EBIT/TEV (%)": ebit_tev,
         "ROC (%)": roc,
         "EPS (Basic)": eps,
@@ -267,6 +325,8 @@ def calculate(ticker, record, universe_row=None):
         "Current Ratio": current_ratio,
         "EPS Growth (%)": growth(eps, eps_prior, minimum_prior=0.10),
         "FCF Growth (%)": growth(fcf, fcf_prior, minimum_prior=1_000_000),
+        "EPS CAGR (%)": eps_cagr,
+        "FCF CAGR (%)": fcf_cagr,
         "STA (%)": sta,
         "SNOA (%)": snoa,
     }
@@ -427,8 +487,6 @@ def main():
             current_ratio = safe_div(positive(current_assets), positive(current_liabilities))
             if not pd.isna(current_ratio) and float(current_ratio) > 10:
                 current_ratio = np.nan
-            fcfta = safe_div(fcf, positive(assets)) * 100
-
             history_rows.append({
                 "Company": company,
                 "Ticker": ticker,
@@ -453,7 +511,6 @@ def main():
                 "STA (%)": sta,
                 "SNOA (%)": snoa,
                 "Operating Cash Flow / Assets (%)": safe_div(cfo, positive(assets)) * 100,
-                "FCFTA (%)": fcfta,
                 "Reporting Currency": currency,
                 "Calculation Timestamp": timestamp,
                 "Formula Version": FORMULA_VERSION,
